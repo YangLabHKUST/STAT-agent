@@ -1114,10 +1114,10 @@
         renderPlots(_deduplicatePlots(event.plots));
         break;
       case 'execution_issue':
-        // Show execution issues with distinct error UI — ONLY the issue, no analysis
+        // Only show real errors — skip partial_success/no_effect if response is still valid
         _hasExecutionIssue = true;
-        if (event.explanation) {
-          appendToAssistantMsg(`<div class="alert-card error"><strong>Execution Issue</strong> (${escapeHtml(event.issue_type || 'error')})<br>${renderMarkdown(event.explanation)}</div>`);
+        if (event.explanation && (event.issue_type === 'error' || event.issue_type === 'validation_failed')) {
+          appendToAssistantMsg(`<div class="alert-card error"><strong>Execution Issue</strong><br>${renderMarkdown(event.explanation)}</div>`);
         }
         break;
       case 'execution_complete':
@@ -1448,6 +1448,31 @@
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     // Links
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    // Tables: detect lines starting with | and render as <table>
+    html = html.replace(/((?:^|\n)\|.+\|(?:\n\|.+\|)+)/g, function(tableBlock) {
+      const rows = tableBlock.trim().split('\n').filter(r => r.trim());
+      if (rows.length < 2) return tableBlock;
+      let table = '<table class="chat-table">';
+      rows.forEach((row, i) => {
+        // Skip separator row (|---|---|)
+        if (/^\|[\s\-:]+\|/.test(row.replace(/<br>/g, ''))) return;
+        const cells = row.split('|').filter((_, j, a) => j > 0 && j < a.length - 1);
+        const tag = i === 0 ? 'th' : 'td';
+        table += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+      });
+      table += '</table>';
+      return table;
+    });
+    // Unordered lists: consecutive lines starting with - or *
+    html = html.replace(/((?:^|\n)[*\-] .+(?:\n[*\-] .+)*)/g, function(block) {
+      const items = block.trim().split('\n').map(l => l.replace(/^[*\-] /, ''));
+      return '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
+    });
+    // Numbered lists: consecutive lines starting with 1. 2. etc
+    html = html.replace(/((?:^|\n)\d+\. .+(?:\n\d+\. .+)*)/g, function(block) {
+      const items = block.trim().split('\n').map(l => l.replace(/^\d+\. /, ''));
+      return '<ol>' + items.map(i => `<li>${i}</li>`).join('') + '</ol>';
+    });
     // Line breaks
     html = html.replace(/\n/g, '<br>');
     return html;

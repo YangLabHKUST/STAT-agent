@@ -1032,6 +1032,26 @@ html, body {
   border: 1px solid var(--border);
 }
 
+/* --- Chat: Tables --- */
+.chat-table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 12px;
+  width: 100%;
+}
+.chat-table th, .chat-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+}
+.chat-table th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+.chat-table tr:nth-child(even) td {
+  background: var(--bg-secondary);
+}
+
 /* --- Chat: Alert Cards --- */
 .alert-card {
   margin: 6px 0;
