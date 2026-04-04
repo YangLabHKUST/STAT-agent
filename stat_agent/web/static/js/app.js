@@ -1114,10 +1114,9 @@
         renderPlots(_deduplicatePlots(event.plots));
         break;
       case 'execution_issue':
-        // Only show real errors — skip partial_success/no_effect if response is still valid
         _hasExecutionIssue = true;
-        if (event.explanation && (event.issue_type === 'error' || event.issue_type === 'validation_failed')) {
-          appendToAssistantMsg(`<div class="alert-card error"><strong>Execution Issue</strong><br>${renderMarkdown(event.explanation)}</div>`);
+        if (event.explanation) {
+          appendToAssistantMsg(`<div class="alert-card error"><strong>Execution Issue</strong> (${escapeHtml(event.issue_type || 'error')})<br>${renderMarkdown(event.explanation)}</div>`);
         }
         break;
       case 'execution_complete':

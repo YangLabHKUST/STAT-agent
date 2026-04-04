@@ -2721,11 +2721,11 @@ Rules:
 - data_changes: Always provide, be detailed and specific
 - interpretation: Only if requested above (otherwise null)
 - key_findings: Only if interpretation requested (otherwise empty array)
-- execution_issues: Detect if code ACTUALLY failed or did not achieve the user's goal
+- execution_issues: Detect if code failed or didn't achieve its goal
   - has_issues=true ONLY if: Python error occurred, validation failed, code had no effect, or the user's goal was NOT achieved
-  - has_issues=false if: output was truncated but the analysis/data changes completed successfully. Truncated print output is NORMAL for large datasets and is NOT an issue.
-  - issue_type: "error" (Python exception), "validation_failed" (data validation failed), "partial_success" (goal partially achieved — NOT for truncated output), "no_effect" (code ran but changed nothing)
+  - issue_type: "error" (Python exception), "validation_failed" (data validation failed), "partial_success" (some parts worked but goal incomplete), "no_effect" (code ran but changed nothing)
   - explanation: User-friendly explanation of what went wrong and why
+  - IMPORTANT: Truncated print output is NOT an issue. Output is truncated at ~3000 chars for display purposes only — the actual data in memory is complete. Do NOT flag truncated output as partial_success if the code executed successfully and the data was correctly modified/analyzed.
 
 Output valid JSON only:"""
 
