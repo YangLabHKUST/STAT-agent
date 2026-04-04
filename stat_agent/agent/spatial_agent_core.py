@@ -2656,6 +2656,8 @@ Provide a clear, concise interpretation (2-4 sentences):
         assembled_parts = []
         result_idx = 0
 
+        has_interpret = bool(interpret_instruction)
+
         for seg_type, content in segments:
             if seg_type == 'text':
                 assembled_parts.append(f"**Your explanation:**\n{content}\n")
@@ -2664,7 +2666,10 @@ Provide a clear, concise interpretation (2-4 sentences):
                 # Add corresponding output
                 if result_idx < len(execution_results):
                     result = execution_results[result_idx]
-                    if result.stdout:
+                    # Only pass stdout when interpretation is requested —
+                    # otherwise it's just diagnostic noise that causes
+                    # spurious partial_success from truncation
+                    if result.stdout and has_interpret:
                         truncated = result.stdout[:3000]
                         if len(result.stdout) > 3000:
                             truncated += "\n... (output truncated)"
@@ -2694,7 +2699,6 @@ Provide a clear, concise interpretation (2-4 sentences):
         conversation_history = self.memory.get_history_string()
 
         # Build prompt
-        has_interpret = bool(interpret_instruction)
 
         prompt = f"""Analyze spatial transcriptomics code execution results.
 
