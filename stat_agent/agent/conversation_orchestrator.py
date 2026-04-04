@@ -761,8 +761,7 @@ class ConversationOrchestrator:
 
             # Emit warning before execution if no skill matched
             if result.no_skill_matched:
-                warning_message = f"No specialized skill found. Using general capabilities."
-                yield {'type': 'warning', 'message': warning_message}
+                yield {'type': 'status', 'message': 'Using general analysis mode.'}
 
             # Execute code
             step_response = None

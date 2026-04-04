@@ -74,6 +74,14 @@
             <div class="spinner"></div>
             <span>Loading...</span>
           </div>
+          <!-- 3D Viewer overlay -->
+          <div id="viewer-3d" class="viewer-3d hidden">
+            <div id="scene-3d" class="scene-3d"></div>
+            <div class="viewer-3d-controls">
+              <span class="toolbar-label">Spacing</span>
+              <input type="range" id="spacing-slider" min="20" max="300" value="120" class="toolbar-slider" title="Slice spacing">
+            </div>
+          </div>
         </div>
         <div class="viewer-toolbar">
           <div class="toolbar-left">
@@ -104,7 +112,10 @@
       <section class="controls-panel">
         <!-- Slice Selector -->
         <div class="control-group" id="slice-group">
-          <div class="control-label">Slices</div>
+          <div class="control-label">
+            <span>Slices</span>
+            <button id="toggle-3d-btn" class="btn-tiny" title="3D View">3D View</button>
+          </div>
           <div id="slice-tabs" class="slice-tabs"></div>
         </div>
 

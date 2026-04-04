@@ -3322,11 +3322,11 @@ Response (JSON array only):"""
         if no_skill_matched_steps:
             if len(no_skill_matched_steps) == 1 and len(plan_result.steps) == 1:
                 # Single step, no skill matched
-                warning_prefix = "⚠️  Note: No specialized skill found for this task. I'll do my best to help with general capabilities.\n\n"
+                warning_prefix = "Using general analysis mode.\n\n"
             else:
                 # Multiple steps or partial matching
                 steps_str = ", ".join(map(str, no_skill_matched_steps))
-                warning_prefix = f"⚠️  Note: No specialized skills found for step(s) {steps_str}. Proceeding with general capabilities.\n\n"
+                warning_prefix = f"Steps {steps_str}: using general analysis mode.\n\n"
             final_response = warning_prefix + final_response
 
         logger.info("="*60)
@@ -3858,13 +3858,12 @@ Response (JSON array only):"""
         if no_skill_matched_steps:
             if len(no_skill_matched_steps) == 1 and len(plan_result.steps) == 1:
                 # Single step, no skill matched
-                warning_message = "⚠️  Note: No specialized skill found for this task. I'll do my best to help with general capabilities."
+                warning_message = "Using general analysis mode."
             else:
                 # Multiple steps or partial matching
                 steps_str = ", ".join(map(str, no_skill_matched_steps))
-                warning_message = f"⚠️  Note: No specialized skills found for step(s) {steps_str}. Proceeding with general capabilities."
-            # Emit warning as separate event (will appear after execution_complete in UI)
-            yield {'type': 'warning', 'message': warning_message}
+                warning_message = f"Steps {steps_str}: using general analysis mode."
+            yield {'type': 'status', 'message': warning_message}
 
         logger.info("="*60)
         logger.info("PIPELINE COMPLETE")

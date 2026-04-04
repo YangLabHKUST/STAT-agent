@@ -346,6 +346,84 @@ html, body {
   height: 100%;
 }
 
+/* --- 3D Viewer --- */
+.viewer-3d {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #f0f2f5 0%, #e2e6ec 100%);
+  overflow: hidden;
+  cursor: grab;
+}
+.viewer-3d.orbiting { cursor: grabbing; }
+
+.scene-3d {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+
+.slice-plane {
+  position: absolute;
+  transform-style: preserve-3d;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+  transition: box-shadow 0.15s;
+}
+.slice-plane:hover {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2), 0 0 0 2px rgba(100,149,237,0.6);
+}
+.slice-plane.active-slice {
+  box-shadow: 0 2px 12px rgba(0,0,0,0.2), 0 0 0 3px cornflowerblue;
+}
+
+.slice-plane canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.slice-label {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font-size: 11px;
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  pointer-events: none;
+  border-top-left-radius: 4px;
+}
+
+.viewer-3d-controls {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(8px);
+  padding: 5px 14px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 2;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.12);
+}
+.viewer-3d-controls .toolbar-slider {
+  width: 100px;
+}
+
+.btn-tiny.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
 .canvas-spinner {
   position: absolute;
   inset: 0;
@@ -998,6 +1076,29 @@ html, body {
   padding: 10px 12px;
   overflow-x: auto;
   white-space: pre;
+}
+
+/* --- Chat: Markdown Headings --- */
+.chat-heading { margin: 8px 0 4px; font-weight: 600; }
+h1.chat-heading { font-size: 1.3em; }
+h2.chat-heading { font-size: 1.15em; }
+h3.chat-heading { font-size: 1.05em; }
+h4.chat-heading, h5.chat-heading, h6.chat-heading { font-size: 0.95em; }
+
+/* --- Chat: Blockquote --- */
+.chat-blockquote {
+  margin: 6px 0;
+  padding: 4px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* --- Chat: Horizontal Rule --- */
+.chat-hr {
+  border: none;
+  border-top: 1px solid var(--border-light);
+  margin: 8px 0;
 }
 
 /* --- Chat: Execution Output --- */

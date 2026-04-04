@@ -1441,19 +1441,27 @@
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<div class="chat-code-block"><pre>$2</pre></div>');
     // Inline code
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Headings (must be before bold, at start of line)
+    html = html.replace(/(^|\n)######\s+(.+)/g, '$1<h6 class="chat-heading">$2</h6>');
+    html = html.replace(/(^|\n)#####\s+(.+)/g, '$1<h5 class="chat-heading">$2</h5>');
+    html = html.replace(/(^|\n)####\s+(.+)/g, '$1<h4 class="chat-heading">$2</h4>');
+    html = html.replace(/(^|\n)###\s+(.+)/g, '$1<h3 class="chat-heading">$2</h3>');
+    html = html.replace(/(^|\n)##\s+(.+)/g, '$1<h2 class="chat-heading">$2</h2>');
+    html = html.replace(/(^|\n)#\s+(.+)/g, '$1<h1 class="chat-heading">$2</h1>');
+    // Horizontal rule
+    html = html.replace(/(^|\n)---+(\n|$)/g, '$1<hr class="chat-hr">$2');
     // Bold
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     // Italic
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     // Links
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-    // Tables: detect lines starting with | and render as <table>
+    // Tables
     html = html.replace(/((?:^|\n)\|.+\|(?:\n\|.+\|)+)/g, function(tableBlock) {
       const rows = tableBlock.trim().split('\n').filter(r => r.trim());
       if (rows.length < 2) return tableBlock;
       let table = '<table class="chat-table">';
       rows.forEach((row, i) => {
-        // Skip separator row (|---|---|)
         if (/^\|[\s\-:]+\|/.test(row.replace(/<br>/g, ''))) return;
         const cells = row.split('|').filter((_, j, a) => j > 0 && j < a.length - 1);
         const tag = i === 0 ? 'th' : 'td';
@@ -1462,12 +1470,17 @@
       table += '</table>';
       return table;
     });
-    // Unordered lists: consecutive lines starting with - or *
+    // Blockquotes
+    html = html.replace(/((?:^|\n)&gt; .+(?:\n&gt; .+)*)/g, function(block) {
+      const content = block.trim().split('\n').map(l => l.replace(/^&gt; /, '')).join('<br>');
+      return `<blockquote class="chat-blockquote">${content}</blockquote>`;
+    });
+    // Unordered lists
     html = html.replace(/((?:^|\n)[*\-] .+(?:\n[*\-] .+)*)/g, function(block) {
       const items = block.trim().split('\n').map(l => l.replace(/^[*\-] /, ''));
       return '<ul>' + items.map(i => `<li>${i}</li>`).join('') + '</ul>';
     });
-    // Numbered lists: consecutive lines starting with 1. 2. etc
+    // Numbered lists
     html = html.replace(/((?:^|\n)\d+\. .+(?:\n\d+\. .+)*)/g, function(block) {
       const items = block.trim().split('\n').map(l => l.replace(/^\d+\. /, ''));
       return '<ol>' + items.map(i => `<li>${i}</li>`).join('') + '</ol>';
@@ -1618,6 +1631,7 @@
     updateDataInfo();
     updateVizModeState();
     updateROIList();
+    if (view3d.active) render3DView();
   }
 
   async function preloadAllSlices() {
@@ -1667,6 +1681,7 @@
         render();
         updateCelltypeCheckboxes();
         updateDataInfo();
+        if (view3d.active) render3DView();
       });
     }
 
@@ -2423,6 +2438,9 @@
 
     document.getElementById('zoom-fit-btn').addEventListener('click', resetView);
 
+    // 3D toggle
+    document.getElementById('toggle-3d-btn').addEventListener('click', toggle3DView);
+
     // Chat
     const chatInput = document.getElementById('chat-input');
     chatInput.addEventListener('keydown', (e) => {
@@ -2480,6 +2498,251 @@
         if (state.roiTool) cancelROITool();
       }
     });
+  }
+
+  // ============================================================
+  // SECTION: 3D VIEWER
+  // ============================================================
+
+  const view3d = {
+    active: false,
+    rotX: -30,
+    rotY: 20,
+    zoom: 1.0,
+    spacing: 140,
+    orbiting: false,
+    dragMoved: false,    // distinguish click vs drag
+    orbitStart: null,
+    orbitStartRot: null,
+  };
+
+  function toggle3DView() {
+    view3d.active = !view3d.active;
+    const viewer3d = document.getElementById('viewer-3d');
+    const canvas2d = document.getElementById('spatial-canvas');
+    const btn = document.getElementById('toggle-3d-btn');
+
+    if (view3d.active) {
+      viewer3d.classList.remove('hidden');
+      canvas2d.style.visibility = 'hidden';
+      btn.classList.add('active');
+      btn.textContent = '2D View';
+      render3DView();
+      setup3DInteraction();
+    } else {
+      viewer3d.classList.add('hidden');
+      canvas2d.style.visibility = '';
+      btn.classList.remove('active');
+      btn.textContent = '3D View';
+      teardown3DInteraction();
+      render();
+    }
+  }
+
+  function renderSliceToCanvas(sliceId, modality, displayW, displayH) {
+    const key = getCanvasKey(sliceId, modality);
+    const c = state.canvases[key];
+    if (!c || !c.loaded) return null;
+
+    // Render at full image resolution (capped at 2048 for perf), CSS scales down
+    const imgW = c.imageWidth || displayW;
+    const imgH = c.imageHeight || displayH;
+    const maxDim = 2048;
+    const resFactor = Math.min(maxDim / Math.max(imgW, imgH), 1);
+    const renderW = Math.round(imgW * resFactor);
+    const renderH = Math.round(imgH * resFactor);
+
+    const offscreen = document.createElement('canvas');
+    offscreen.width = renderW;
+    offscreen.height = renderH;
+    offscreen.style.width = displayW + 'px';
+    offscreen.style.height = displayH + 'px';
+    const ctx = offscreen.getContext('2d');
+
+    // Draw image or white bg at full resolution
+    if (c.image && !c.hideBackground) {
+      ctx.drawImage(c.image, 0, 0, imgW, imgH, 0, 0, renderW, renderH);
+    } else {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, renderW, renderH);
+    }
+
+    // Draw cells at full resolution
+    const fakeEl = { width: renderW, height: renderH };
+    const saved = { vx: c.viewX, vy: c.viewY, vw: c.viewWidth, vh: c.viewHeight };
+    c.viewX = 0; c.viewY = 0;
+    c.viewWidth = imgW;
+    c.viewHeight = imgH;
+
+    ctx.globalAlpha = c.opacity;
+    if (c.vizMode === 'celltype') {
+      renderCells(ctx, c, fakeEl);
+    } else if (c.vizMode === 'gene' && c.geneExpression) {
+      renderGeneExpression(ctx, c, fakeEl);
+    } else if (c.vizMode === 'proportion' && c.isSpotData && c.spotInfo) {
+      renderProportions(ctx, c, fakeEl);
+    }
+    ctx.globalAlpha = 1.0;
+
+    // Restore view
+    c.viewX = saved.vx; c.viewY = saved.vy;
+    c.viewWidth = saved.vw; c.viewHeight = saved.vh;
+
+    return offscreen;
+  }
+
+  function render3DView() {
+    if (!view3d.active) return;
+
+    const scene = document.getElementById('scene-3d');
+    const container = document.getElementById('viewer-3d');
+    const cw = container.clientWidth;
+    const ch = container.clientHeight;
+
+    // Gather all loaded slices
+    const slices = (state.sessionSummary?.available_slices || []).filter(s => {
+      const key = getCanvasKey(s.slice_id, s.modality);
+      return state.canvases[key]?.loaded;
+    });
+    if (slices.length === 0) return;
+
+    // Get per-slice dimensions, find max for uniform display width
+    const sliceDims = slices.map(s => {
+      const c = state.canvases[getCanvasKey(s.slice_id, s.modality)];
+      return { w: c?.imageWidth || 400, h: c?.imageHeight || 400 };
+    });
+    const maxW = Math.max(...sliceDims.map(d => d.w));
+    const maxH = Math.max(...sliceDims.map(d => d.h));
+
+    // Size planes to fill the view well:
+    // - Horizontally: use up to 75% of container width
+    // - Vertically: account for slice height + total stack depth projected at the view angle
+    const stackDepth = (slices.length - 1) * view3d.spacing;
+    const projectedStackH = maxH * (maxW / maxH) + Math.abs(Math.sin(view3d.rotX * Math.PI / 180)) * stackDepth;
+    const fitScale = Math.min((cw * 0.75) / maxW, (ch * 0.7) / projectedStackH);
+    const displayW = Math.round(maxW * fitScale);
+
+    scene.innerHTML = '';
+
+    // Stack slices vertically in Z
+    const totalSpacing = (slices.length - 1) * view3d.spacing;
+    const startZ = totalSpacing / 2;
+
+    slices.forEach((s, i) => {
+      const c = state.canvases[getCanvasKey(s.slice_id, s.modality)];
+      if (!c) return;
+
+      // Per-slice aspect ratio
+      const sw = c.imageWidth || 400;
+      const sh = c.imageHeight || 400;
+      const planeW = displayW;
+      const planeH = Math.round(displayW * (sh / sw));
+
+      const offscreen = renderSliceToCanvas(s.slice_id, s.modality, planeW, planeH);
+      if (!offscreen) return;
+
+      const plane = document.createElement('div');
+      plane.className = 'slice-plane' + (s.slice_id === state.currentSliceId ? ' active-slice' : '');
+      plane.style.width = planeW + 'px';
+      plane.style.height = planeH + 'px';
+      plane.style.left = ((cw - planeW) / 2) + 'px';
+      plane.style.top = ((ch - planeH) / 2) + 'px';
+
+      const z = startZ - i * view3d.spacing;
+      plane.style.transform = `translateZ(${z}px)`;
+
+      plane.appendChild(offscreen);
+
+      // Label
+      const label = document.createElement('div');
+      label.className = 'slice-label';
+      label.textContent = `${s.tissue_name || 'Slice ' + s.slice_id} (${s.modality})`;
+      plane.appendChild(label);
+
+      // Click: switch to that slice in 2D view (only if not dragging)
+      plane.addEventListener('click', () => {
+        if (view3d.dragMoved) return;
+        switchSlice(s.slice_id, s.modality);
+        toggle3DView(); // Exit 3D, show selected slice in 2D
+      });
+
+      scene.appendChild(plane);
+    });
+
+    updateSceneTransform();
+  }
+
+  function updateSceneTransform() {
+    const scene = document.getElementById('scene-3d');
+    if (!scene) return;
+    const container = document.getElementById('viewer-3d');
+    const cx = container.clientWidth / 2;
+    const cy = container.clientHeight / 2;
+    scene.style.perspective = `${1200 / view3d.zoom}px`;
+    scene.style.perspectiveOrigin = `${cx}px ${cy}px`;
+    scene.style.transform = `scale(${view3d.zoom}) rotateX(${view3d.rotX}deg) rotateY(${view3d.rotY}deg)`;
+  }
+
+  let _3dHandlers = {};
+
+  function setup3DInteraction() {
+    const viewer = document.getElementById('viewer-3d');
+
+    _3dHandlers.mousedown = (e) => {
+      if (e.target.closest('.viewer-3d-controls')) return;
+      view3d.orbiting = true;
+      view3d.dragMoved = false;
+      view3d.orbitStart = { x: e.clientX, y: e.clientY };
+      view3d.orbitStartRot = { x: view3d.rotX, y: view3d.rotY };
+      viewer.classList.add('orbiting');
+      e.preventDefault();
+    };
+
+    _3dHandlers.mousemove = (e) => {
+      if (!view3d.orbiting) return;
+      const dx = e.clientX - view3d.orbitStart.x;
+      const dy = e.clientY - view3d.orbitStart.y;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) view3d.dragMoved = true;
+      view3d.rotY = view3d.orbitStartRot.y + dx * 0.3;
+      // Allow full rotation — no clamping
+      view3d.rotX = view3d.orbitStartRot.x - dy * 0.3;
+      updateSceneTransform();
+    };
+
+    _3dHandlers.mouseup = () => {
+      view3d.orbiting = false;
+      viewer.classList.remove('orbiting');
+    };
+
+    _3dHandlers.wheel = (e) => {
+      e.preventDefault();
+      const factor = e.deltaY > 0 ? 0.92 : 1.08;
+      view3d.zoom = Math.max(0.2, Math.min(6, view3d.zoom * factor));
+      updateSceneTransform();
+    };
+
+    _3dHandlers.spacing = () => {
+      view3d.spacing = parseInt(document.getElementById('spacing-slider').value);
+      render3DView();
+    };
+
+    viewer.addEventListener('mousedown', _3dHandlers.mousedown);
+    document.addEventListener('mousemove', _3dHandlers.mousemove);
+    document.addEventListener('mouseup', _3dHandlers.mouseup);
+    viewer.addEventListener('wheel', _3dHandlers.wheel, { passive: false });
+    document.getElementById('spacing-slider').addEventListener('input', _3dHandlers.spacing);
+  }
+
+  function teardown3DInteraction() {
+    const viewer = document.getElementById('viewer-3d');
+    if (!viewer) return;
+    viewer.removeEventListener('mousedown', _3dHandlers.mousedown);
+    document.removeEventListener('mousemove', _3dHandlers.mousemove);
+    document.removeEventListener('mouseup', _3dHandlers.mouseup);
+    viewer.removeEventListener('wheel', _3dHandlers.wheel);
+    const spacingSlider = document.getElementById('spacing-slider');
+    if (spacingSlider) spacingSlider.removeEventListener('input', _3dHandlers.spacing);
+    _3dHandlers = {};
   }
 
   // ============================================================
