@@ -1102,16 +1102,31 @@ h4.chat-heading, h5.chat-heading, h6.chat-heading { font-size: 0.95em; }
 }
 
 /* --- Chat: Execution Output --- */
+.exec-details {
+  margin: 6px 0;
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.exec-details summary {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  background: var(--bg-secondary);
+  user-select: none;
+}
+.exec-details summary:hover {
+  color: var(--text);
+}
 .exec-output {
-  margin: 4px 0;
   padding: 6px 8px;
   background: #1e1e2e;
   color: #a6adc8;
-  border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
-  max-height: 200px;
+  max-height: 300px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;

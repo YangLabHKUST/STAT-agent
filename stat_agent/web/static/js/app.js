@@ -1040,11 +1040,13 @@
   let _shownPlotKeys = new Set();
   let _shownTextSnippets = new Set();
   let _hasExecutionIssue = false;
+  let _execOutputEl = null;
 
   function _resetStreamState() {
     _shownPlotKeys = new Set();
     _shownTextSnippets = new Set();
     _hasExecutionIssue = false;
+    _execOutputEl = null;
   }
 
   function _deduplicatePlots(plots) {
@@ -1101,9 +1103,36 @@
         appendToAssistantMsg(`<div class="alert-card warning">${renderMarkdown(event.message)}</div>`);
         break;
       case 'execution_start':
+        // Create a collapsible output block for upcoming stdout
+        _execOutputEl = null;
         break;
       case 'execution_output':
-        // Hide raw stdout/stderr — the agent_text interpretation is cleaner
+        if (event.line != null) {
+          const ln = event.line.trim();
+          // Skip progress bars (tqdm, keras, etc.) and empty lines
+          if (/\d+%\|[█▓▒░▌▍▎▏ ]*\|/.test(ln)) break;
+          if (/^\d+\/\d+\s+\[=+>?\.*\]/.test(ln)) break;
+          if (!ln && event.stream === 'stdout') break;
+
+          // Lazily create the output container
+          if (!_execOutputEl) {
+            if (!state.currentAssistantMsg) break;
+            const details = document.createElement('details');
+            details.className = 'exec-details';
+            const summary = document.createElement('summary');
+            summary.textContent = 'Output';
+            details.appendChild(summary);
+            const pre = document.createElement('div');
+            pre.className = 'exec-output';
+            details.appendChild(pre);
+            _execOutputEl = pre;
+            state.currentAssistantMsg.appendChild(details);
+          }
+          const lineEl = document.createElement('div');
+          if (event.stream === 'stderr') lineEl.className = 'stderr';
+          lineEl.textContent = event.line;
+          _execOutputEl.appendChild(lineEl);
+        }
         break;
       case 'agent_text':
         if (!_isTextDuplicate(event.text)) {
@@ -1121,10 +1150,9 @@
         break;
       case 'execution_complete':
       case 'step_execution_complete':
+        // Only render plots — the text content was already shown via agent_text events.
+        // event.response is for memory/logging, not for display.
         renderPlots(_deduplicatePlots(event.plots));
-        if (event.response && !_isTextDuplicate(event.response)) {
-          appendAgentTextFormatted(event.response);
-        }
         if (event.step_number) markPlanStepDone(event.step_number);
         break;
       case 'reflection_start':

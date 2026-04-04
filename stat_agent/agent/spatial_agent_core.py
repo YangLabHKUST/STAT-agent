@@ -2627,6 +2627,41 @@ Provide a clear, concise interpretation (2-4 sentences):
 
         return segments, interpret_instruction
 
+    @staticmethod
+    def _clean_output(text):
+        """Filter noisy output: progress bars, tqdm, training epochs, repeated lines."""
+        if not text:
+            return text
+        import re
+        lines = text.split('\n')
+        cleaned = []
+        seen = set()
+        suppressed = 0
+        for line in lines:
+            stripped = line.rstrip()
+            # Skip progress bar lines (tqdm, percentage bars, etc.)
+            if re.search(r'\d+%\|[█▓▒░▌▍▎▏ ]*\|', stripped):
+                suppressed += 1
+                continue
+            if re.search(r'^\s*\d+/\d+\s+\[=+>?\.*\]', stripped):  # keras-style
+                suppressed += 1
+                continue
+            # Skip repeated training/epoch lines (keep first + last)
+            if re.match(r'^\s*(Epoch|epoch|Step|step|Iteration|iteration)\s+\d+', stripped):
+                key = re.sub(r'\d+', 'N', stripped)[:60]
+                if key in seen:
+                    suppressed += 1
+                    continue
+                seen.add(key)
+            # Skip empty lines in sequence
+            if not stripped and cleaned and not cleaned[-1].strip():
+                continue
+            cleaned.append(line)
+        result = '\n'.join(cleaned)
+        if suppressed > 0:
+            result += f"\n... ({suppressed} progress/training lines omitted)"
+        return result
+
     async def _analyze_execution_results(
         self,
         user_query: str,
@@ -2665,8 +2700,9 @@ Provide a clear, concise interpretation (2-4 sentences):
                 if result_idx < len(execution_results):
                     result = execution_results[result_idx]
                     if result.stdout:
-                        truncated = result.stdout[:3000]
-                        if len(result.stdout) > 3000:
+                        cleaned = self._clean_output(result.stdout)
+                        truncated = cleaned[:3000]
+                        if len(cleaned) > 3000:
                             truncated += "\n... (output truncated)"
                         assembled_parts.append(f"**Output:**\n{truncated}\n")
                     if result.error:
