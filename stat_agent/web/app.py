@@ -1492,6 +1492,37 @@ def chat_stream():
                     thread.join()
                     logger.info("Thread completed")
 
+                    # Fix multi-step: each step calls add_assistant_message_with_summary
+                    # but only the first creates a Turn (messages[-2] must be user).
+                    # Create turns for orphaned assistant messages so history includes all steps.
+                    if agent and agent.memory:
+                        msgs = agent.memory.messages
+                        turns = agent.memory.turns
+                        # Find assistant messages that don't have a corresponding turn
+                        for i, msg in enumerate(msgs):
+                            if msg.role != 'assistant':
+                                continue
+                            # Check if this message is already part of a turn
+                            already_in_turn = any(t.assistant_message == msg.content for t in turns)
+                            if already_in_turn:
+                                continue
+                            # Find the most recent user message before this assistant message
+                            user_msg = None
+                            for j in range(i - 1, -1, -1):
+                                if msgs[j].role == 'user':
+                                    user_msg = msgs[j].content
+                                    break
+                            if user_msg:
+                                from stat_agent.agent.memory import ConversationTurn
+                                turns.append(ConversationTurn(
+                                    user_message=user_msg,
+                                    assistant_message=msg.content,
+                                    code_generated=msg.code_executed,
+                                    execution_result=msg.execution_output,
+                                    metadata=msg.metadata or {}
+                                ))
+                                logger.info(f"Created synthetic turn for orphaned assistant message")
+
                     # Save visual events and continuation flag into turn metadata
                     _turns_after = len(agent.memory.turns) if agent and agent.memory else 0
                     new_turn_created = _turns_after > _turns_before
@@ -1516,21 +1547,38 @@ def chat_stream():
                                 break  # Stop at first non-clarification from the end
 
                     if new_turn_created and agent is not None:
-                        last_turn = agent.memory.turns[-1]
-                        if last_turn.metadata is None:
-                            last_turn.metadata = {}
-                        # Pending events from previous clarification request go before this turn's events
+                        n_new_turns = _turns_after - _turns_before
                         pending = list(_pending_visual_events)
                         _pending_visual_events.clear()
+
+                        # For multi-step plans: multiple turns created in one stream.
+                        # The first new turn gets the visual events; subsequent turns
+                        # are marked as continuations so they merge on restore.
+                        first_new_turn = agent.memory.turns[_turns_before]
+                        if first_new_turn.metadata is None:
+                            first_new_turn.metadata = {}
                         if pending or turn_visual:
-                            last_turn.metadata['visual_events_before'] = pending
-                            last_turn.metadata['visual_events'] = turn_visual
-                            logger.info(f"Saved visual events: {len(pending)} before, {len(turn_visual)} after")
+                            first_new_turn.metadata['visual_events_before'] = pending
+                            first_new_turn.metadata['visual_events'] = turn_visual
+                            logger.info(f"Saved visual events on first turn: {len(pending)} before, {len(turn_visual)} after")
                         if _is_continuation:
-                            last_turn.metadata['is_continuation'] = True
+                            first_new_turn.metadata['is_continuation'] = True
                             if _chain_original_query:
-                                last_turn.metadata['original_query'] = _chain_original_query
-                            logger.info(f"Marked turn as continuation, original_query={_chain_original_query[:80] if _chain_original_query else None}")
+                                first_new_turn.metadata['original_query'] = _chain_original_query
+                            logger.info(f"Marked first turn as continuation, original_query={_chain_original_query[:80] if _chain_original_query else None}")
+
+                        # Mark additional turns (steps 2, 3, ...) as continuations
+                        # so they merge into the same assistant bubble on restore.
+                        if n_new_turns > 1:
+                            orig_query = _chain_original_query or user_message
+                            for idx in range(_turns_before + 1, _turns_after):
+                                t = agent.memory.turns[idx]
+                                if t.metadata is None:
+                                    t.metadata = {}
+                                t.metadata['is_continuation'] = True
+                                t.metadata['original_query'] = orig_query
+                            logger.info(f"Marked {n_new_turns - 1} additional turns as continuations")
+
                         # Trailing clarification events go to pending for next turn
                         if trailing_clarification:
                             _pending_visual_events.extend(trailing_clarification)
@@ -1538,7 +1586,6 @@ def chat_stream():
                     elif visual_events:
                         # No turn was created (clarification requested) — save all events for next turn
                         _pending_visual_events.extend(visual_events)
-                        logger.info(f"No turn created, saved {len(visual_events)} events as pending")
                         logger.info(f"No turn created, saved {len(visual_events)} visual events as pending")
 
                     # Handle celltype color generation if celltypes were updated

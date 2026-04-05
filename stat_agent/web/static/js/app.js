@@ -181,7 +181,7 @@
 
     const plots = turn.plots || [];
     let plotIdx = 0;
-    let hasError = (turn.visual_events || []).some(e => e.type === 'execution_issue');
+    let hasError = [...(turn.visual_events_before || []), ...(turn.visual_events || [])].some(e => e.type === 'execution_issue');
 
     const parts = turn.assistant.split(/(```python\n[\s\S]*?```|```\n[\s\S]*?```)/g);
     for (const part of parts) {
@@ -267,27 +267,34 @@
       const welcome = chatEl.querySelector('.chat-welcome');
       if (welcome) welcome.remove();
 
-      // currentBody tracks the assistant bubble body for merging continuation turns.
-      // In the live UI, a clarification chain (original query → skill selection → "1" →
-      // step 1 results → prerequisites → answer → step 2 results) all happens in ONE
-      // user bubble + ONE assistant bubble. In memory, this creates multiple turns.
-      // Continuation turns (is_continuation=true) append to the current assistant bubble.
+      // currentBody + currentExchangeQuery track the assistant bubble for merging
+      // continuation turns that belong to the SAME exchange. A continuation merges
+      // only if its original_query matches the current exchange's query.
       let currentBody = null;
+      let currentExchangeQuery = null;
 
       for (const turn of res.turns) {
-        if (turn.is_continuation && currentBody) {
+        // Determine if this turn should merge into the current assistant bubble.
+        // Merge when: it's a continuation AND we have an active bubble AND
+        // the exchange query matches (same clarification chain or multi-step plan).
+        const shouldMerge = turn.is_continuation && currentBody && (
+          turn.original_query === currentExchangeQuery ||
+          turn.user === currentExchangeQuery  // multi-step: user msg equals the exchange query
+        );
+
+        if (shouldMerge) {
           // Append to existing assistant bubble — no new user/assistant bubbles.
           _renderVisualEvents(currentBody, turn.visual_events_before);
-          currentBody.insertAdjacentHTML('beforeend',
-            `<div class="small-info" style="margin:6px 0;color:var(--text-secondary);font-style:italic">↳ ${escapeHtml(turn.user)}</div>`);
+          // Show inline reply for clarification responses (skip for multi-step auto-continuations
+          // where user msg equals the exchange query — those weren't actual user inputs)
+          if (turn.user !== currentExchangeQuery) {
+            currentBody.insertAdjacentHTML('beforeend',
+              `<div class="small-info" style="margin:6px 0;color:var(--text-secondary);font-style:italic">↳ ${escapeHtml(turn.user)}</div>`);
+          }
           _renderVisualEvents(currentBody, turn.visual_events);
           _renderAssistantContent(currentBody, turn);
-          // Keep currentBody for further continuations in the same chain
         } else {
-          // Reset — this is a new independent exchange
-          currentBody = null;
           // New exchange — create user + assistant bubbles.
-          // For the first continuation in a chain (no currentBody yet), show original_query.
           const userText = (turn.is_continuation && turn.original_query) ? turn.original_query : turn.user;
           const userDiv = document.createElement('div');
           userDiv.className = 'chat-msg user';
@@ -313,7 +320,8 @@
 
           assistDiv.appendChild(body);
           chatEl.appendChild(assistDiv);
-          currentBody = body;  // Track for potential continuation merging
+          currentBody = body;
+          currentExchangeQuery = userText;  // Track which exchange this bubble belongs to
         }
       }
       scrollChatToBottom();
