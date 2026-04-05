@@ -51,6 +51,7 @@ session: SimpleSession = None
 agent: Optional[SpatialAgent] = None  # LLM-powered agent (optional)
 llm_config: Optional[Dict] = None  # Store LLM config for reuse in skills
 chat_abort_event = threading.Event()  # Signal to abort current chat processing
+chat_busy = False  # True while agent is processing a request
 
 
 @app.route('/')
@@ -288,7 +289,9 @@ def get_session_summary():
         summary = session.get_frontend_summary()
         return jsonify({
             'success': True,
-            'summary': summary
+            'summary': summary,
+            'agent_active': agent is not None,
+            'chat_busy': chat_busy,
         })
     except Exception as e:
         return jsonify({
@@ -1190,9 +1193,11 @@ def chat_stream():
 
     def generate():
         """Generator function for Server-Sent Events."""
+        global chat_busy
         import json
         import time
 
+        chat_busy = True
         try:
             # Removed initial progress messages - only show clarification/prerequisites blocks
             # yield f"data: {json.dumps({'type': 'status', 'message': 'Processing your request...'})}\n\n"
@@ -1417,6 +1422,14 @@ def chat_stream():
                     thread.start()
                     logger.info("Thread started, beginning event consumption from queue...")
 
+                    # Event types to record for chat history restore
+                    _VISUAL_EVENTS = {
+                        'planning_complete', 'step_start', 'skill_selection',
+                        'clarification_needed', 'prerequisites_needed',
+                        'advice', 'warning', 'execution_issue',
+                    }
+                    visual_events = []
+
                     # Yield events as they arrive in real-time
                     event_count = 0
                     while True:
@@ -1437,6 +1450,11 @@ def chat_stream():
                                 logger.debug(f"Yielding SSE event #{event_count}: type={event_type}")
                             else:
                                 logger.info(f"Yielding SSE event #{event_count}: type={event_type}")
+
+                            # Record visual events for history restore
+                            if event_type in _VISUAL_EVENTS:
+                                visual_events.append(event_data)
+
                             yield f"data: {json.dumps(event_data)}\n\n"
                         except queue.Empty:
                             # No event yet, keep waiting
@@ -1446,6 +1464,13 @@ def chat_stream():
                     logger.info("Waiting for thread to complete...")
                     thread.join()
                     logger.info("Thread completed")
+
+                    # Save visual events into the last turn's metadata for history restore
+                    if visual_events and agent is not None and agent.memory.turns:
+                        last_turn = agent.memory.turns[-1]
+                        if last_turn.metadata is None:
+                            last_turn.metadata = {}
+                        last_turn.metadata['visual_events'] = visual_events
 
                     # Handle celltype color generation if celltypes were updated
                     celltype_updated = len(final_state_changes.get('celltypes_updated', [])) > 0 if final_state_changes else False
@@ -1499,18 +1524,65 @@ def chat_stream():
                 yield f"data: {json.dumps({'type': 'response', 'message': response['message'], 'code': response.get('code'), 'agent_powered': False, 'celltype_updated': False})}\n\n"
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
+        except GeneratorExit:
+            # Client disconnected (page refresh/close) — abort the agent
+            logger.info("Client disconnected during chat stream, aborting agent")
+            chat_abort_event.set()
+            return
         except Exception as e:
             logger.error(f"Chat stream error: {e}")
             import traceback
             traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        finally:
+            chat_busy = False
 
     response = Response(stream_with_context(generate()), mimetype='text/event-stream')
     response.headers['Cache-Control'] = 'no-cache'
     response.headers['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
     return response
 
+
+
+@app.route('/api/chat/history', methods=['GET'])
+def get_chat_history():
+    """Return conversation history as JSON for frontend reload."""
+    global agent
+
+    turns = []
+    if agent is not None and hasattr(agent, 'memory'):
+        for turn in agent.memory.turns:
+            meta = turn.metadata or {}
+            turns.append({
+                'user': turn.user_message,
+                'assistant': turn.assistant_message,
+                'code': turn.code_generated,
+                'plots': meta.get('plots', []),
+                'visual_events': meta.get('visual_events', []),
+                'timestamp': turn.timestamp,
+            })
+
+    return jsonify({'success': True, 'turns': turns})
+
+
+@app.route('/api/session/reset', methods=['POST'])
+def reset_session():
+    """Reset session and agent state (logout)."""
+    global session, agent
+
+    try:
+        if agent is not None:
+            agent.reset()
+        agent = None
+        session = None
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Failed to reset session: {e}")
+        # Still clear refs even if reset() throws
+        agent = None
+        session = None
+        return jsonify({'success': True})
 
 
 @app.route('/api/chat/save', methods=['GET'])

@@ -203,6 +203,8 @@ html, body {
 }
 
 .btn-header:hover { background: var(--bg-muted); color: var(--text); }
+.btn-logout { color: var(--danger); border-color: var(--danger); opacity: 0.7; }
+.btn-logout:hover { background: var(--danger); color: #fff; opacity: 1; }
 
 .btn-tool {
   padding: 4px 10px;

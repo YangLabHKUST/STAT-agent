@@ -142,6 +142,7 @@ slice.adata = slice.adata[filtered_spots, :].copy()
 
 # Add deconvolution weights to obsm
 slice.adata.obsm["deconv_weights"] = myRCTD["results"]
+slice.adata.uns['has_deconv_weights'] = True
 
 # Update the dominant celltype
 dominant_celltypes = slice.adata.obsm["deconv_weights"].idxmax(axis=1)
