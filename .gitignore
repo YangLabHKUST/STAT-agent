@@ -63,8 +63,5 @@ sync.sh
 # Claude Code project instructions (local only)
 CLAUDE.md
 
-# Claude Code local state (keep .claude/skills/ which is part of the project)
-.claude/*
-!.claude/skills/
-.claude/skills/**/development.ipynb
-.claude/skills/**/__pycache__/
+# Claude Code local state
+.claude/

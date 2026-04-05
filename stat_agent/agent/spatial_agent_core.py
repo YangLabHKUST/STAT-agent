@@ -440,16 +440,18 @@ class SpatialAgent:
         self.conversation_orchestrator = None
 
         if enable_skills:
-            # Auto-discover .claude/skills/ if skill_dir not provided
+            # Auto-discover skills directory
             if skill_dir is None:
-                # Try to find .claude/skills/ relative to current working directory or package root
-                project_root = Path.cwd()
-                skill_dir = project_root / ".claude" / "skills"
+                # 1. Check inside the package (pip install)
+                skill_dir = Path(__file__).parent.parent / "skills"
 
-                # If not found in cwd, try relative to this file (package installation)
+                # 2. Check .claude/skills/ in project root (dev mode)
                 if not skill_dir.exists():
-                    package_root = Path(__file__).parent.parent.parent
-                    skill_dir = package_root / ".claude" / "skills"
+                    skill_dir = Path.cwd() / ".claude" / "skills"
+
+                # 3. Check .claude/skills/ relative to package root
+                if not skill_dir.exists():
+                    skill_dir = Path(__file__).parent.parent.parent / ".claude" / "skills"
 
             if skill_dir and skill_dir.exists():
                 # Use progressive disclosure: load metadata only at startup for fast initialization
