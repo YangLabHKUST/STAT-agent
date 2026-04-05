@@ -1219,6 +1219,7 @@ def chat_stream():
                 global _chain_original_query
                 if not _is_continuation:
                     _chain_original_query = None  # New query — reset chain
+                    _pending_visual_events.clear()  # Clear stale events from previous chain
                 elif _chain_original_query is None:
                     # First continuation in chain — capture original query
                     oq = getattr(agent.clarification_context, '_original_query', None)

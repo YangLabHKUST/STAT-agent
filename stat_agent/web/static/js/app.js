@@ -277,14 +277,15 @@
       for (const turn of res.turns) {
         if (turn.is_continuation && currentBody) {
           // Append to existing assistant bubble — no new user/assistant bubbles.
-          // Show clarification UI from the previous request's pending events,
-          // then the user's inline reply, then this turn's execution events + content.
           _renderVisualEvents(currentBody, turn.visual_events_before);
           currentBody.insertAdjacentHTML('beforeend',
             `<div class="small-info" style="margin:6px 0;color:var(--text-secondary);font-style:italic">↳ ${escapeHtml(turn.user)}</div>`);
           _renderVisualEvents(currentBody, turn.visual_events);
           _renderAssistantContent(currentBody, turn);
+          // Keep currentBody for further continuations in the same chain
         } else {
+          // Reset — this is a new independent exchange
+          currentBody = null;
           // New exchange — create user + assistant bubbles.
           // For the first continuation in a chain (no currentBody yet), show original_query.
           const userText = (turn.is_continuation && turn.original_query) ? turn.original_query : turn.user;
