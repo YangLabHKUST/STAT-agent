@@ -104,228 +104,208 @@
     return false;
   }
 
+  // --- History restore helpers ---
+
+  function _renderVisualEvents(body, events) {
+    if (!events || !events.length) return;
+    for (const ev of events) {
+      switch (ev.type) {
+        case 'planning_complete': {
+          const steps = Array.isArray(ev.plan || ev.steps) ? (ev.plan || ev.steps) : ((ev.plan && ev.plan.steps) ? ev.plan.steps : []);
+          if (steps.length) {
+            const stepsHtml = steps.map((s, i) => {
+              const num = s.step_number || (i + 1);
+              return `<li class="plan-step done" data-step="${num}"><span class="plan-step-num">${num}</span>${escapeHtml(s.description || '')}</li>`;
+            }).join('');
+            body.insertAdjacentHTML('beforeend', `<details class="plan-card"><summary>Plan (${steps.length} steps)</summary><ol class="plan-steps">${stepsHtml}</ol></details>`);
+          }
+          break;
+        }
+        case 'step_start':
+          body.insertAdjacentHTML('beforeend', `<div class="small-info" style="margin:6px 0;font-weight:600">Step ${ev.step_number}${ev.total_steps ? '/' + ev.total_steps : ''}: ${escapeHtml(ev.description || '')}</div>`);
+          break;
+        case 'skill_selection': {
+          const options = ev.options || [];
+          const msg = ev.message || 'Multiple skills matched.';
+          const optHtml = options.map((o, i) =>
+            `<button class="clarification-option-btn" disabled>${i + 1}. ${escapeHtml(o.name || o.slug)}</button>`
+          ).join('');
+          body.insertAdjacentHTML('beforeend', `<div class="clarification-ui"><div class="question">${escapeHtml(msg)}</div><div class="clarification-options">${optHtml}</div></div>`);
+          break;
+        }
+        case 'clarification_needed': {
+          let html = `<div class="clarification-ui"><div class="question">${renderMarkdown(ev.question || '')}</div>`;
+          if (ev.options && ev.options.length) {
+            html += '<div class="clarification-options">';
+            ev.options.forEach(o => {
+              const label = typeof o === 'string' ? o : (o.label || o.name || o);
+              html += `<button class="clarification-option-btn" disabled>${escapeHtml(label)}</button>`;
+            });
+            html += '</div>';
+          }
+          html += '</div>';
+          body.insertAdjacentHTML('beforeend', html);
+          break;
+        }
+        case 'prerequisites_needed': {
+          let html = `<div class="clarification-ui"><div class="question">Prerequisites needed for <strong>${escapeHtml(ev.skill || 'skill')}</strong>:</div>`;
+          html += '<div class="clarification-options">';
+          (ev.questions || []).forEach(q => {
+            html += `<div style="margin:4px 0"><label style="font-size:12px">${escapeHtml(q)}</label></div>`;
+          });
+          html += '</div></div>';
+          body.insertAdjacentHTML('beforeend', html);
+          break;
+        }
+        case 'advice':
+          body.insertAdjacentHTML('beforeend', `<div class="alert-card advice">${renderMarkdown(ev.message)}</div>`);
+          break;
+        case 'warning':
+          body.insertAdjacentHTML('beforeend', `<div class="alert-card warning">${renderMarkdown(ev.message)}</div>`);
+          break;
+        case 'execution_issue':
+          body.insertAdjacentHTML('beforeend', `<div class="alert-card error"><strong>Execution Issue</strong> (${escapeHtml(ev.issue_type || 'error')})<br>${renderMarkdown(ev.explanation || '')}</div>`);
+          break;
+      }
+    }
+  }
+
+  function _renderAssistantContent(body, turn) {
+    // Render turn.assistant markdown into body, matching live streaming output:
+    // - Skip python code fences (not shown during streaming)
+    // - Output fences → collapsible <details>
+    // - Plot markers → inline plots at correct position
+    // - **Error:** → alert card
+    // - **Analysis:** → styled header (skipped if had error)
+    if (!turn.assistant) return;
+
+    const plots = turn.plots || [];
+    let plotIdx = 0;
+    let hasError = (turn.visual_events || []).some(e => e.type === 'execution_issue');
+
+    const parts = turn.assistant.split(/(```python\n[\s\S]*?```|```\n[\s\S]*?```)/g);
+    for (const part of parts) {
+      if (/^```python\n/.test(part)) continue;
+
+      const outputMatch = part.match(/^```\n([\s\S]*?)```$/);
+      if (outputMatch) {
+        const details = document.createElement('details');
+        details.className = 'exec-details';
+        const summary = document.createElement('summary');
+        summary.textContent = 'Output';
+        details.appendChild(summary);
+        const pre = document.createElement('div');
+        pre.className = 'exec-output';
+        pre.textContent = outputMatch[1];
+        details.appendChild(pre);
+        body.appendChild(details);
+        continue;
+      }
+
+      // Text — split off **Analysis:** (always at end), then process lines
+      let textBody = part;
+      let analysisBlock = null;
+      const analysisSplit = textBody.split(/\n(\*\*Analysis:?\*\*\n[\s\S]*)$/);
+      if (analysisSplit.length > 1) {
+        textBody = analysisSplit[0];
+        analysisBlock = analysisSplit[1];
+      }
+
+      const lines = textBody.split('\n');
+      let textBuf = '';
+      for (const line of lines) {
+        const plotMatch = line.match(/^\*?\((\d+) plot\(s\) generated\)\*?$/);
+        if (plotMatch) {
+          if (textBuf.trim()) { const d = document.createElement('div'); d.innerHTML = renderMarkdown(textBuf.trim()); body.appendChild(d); textBuf = ''; }
+          const nPlots = parseInt(plotMatch[1], 10) || 0;
+          for (let p = 0; p < nPlots && plotIdx < plots.length; p++, plotIdx++) {
+            const src = plots[plotIdx];
+            const imgSrc = (typeof src === 'string' && src.startsWith('data:')) ? src : `data:image/png;base64,${src}`;
+            const d = document.createElement('div'); d.className = 'chat-plot'; d.innerHTML = `<img src="${imgSrc}" alt="Plot">`; body.appendChild(d);
+          }
+          continue;
+        }
+        const errorMatch = line.match(/^\*\*Error:?\*\*\s*(.*)/);
+        if (errorMatch) {
+          if (textBuf.trim()) { const d = document.createElement('div'); d.innerHTML = renderMarkdown(textBuf.trim()); body.appendChild(d); textBuf = ''; }
+          hasError = true;
+          const d = document.createElement('div'); d.className = 'alert-card error';
+          d.innerHTML = '<strong>Execution Error</strong><br>' + renderMarkdown(errorMatch[1]); body.appendChild(d);
+          continue;
+        }
+        textBuf += line + '\n';
+      }
+      if (textBuf.trim()) { const d = document.createElement('div'); d.innerHTML = renderMarkdown(textBuf.trim()); body.appendChild(d); }
+
+      if (analysisBlock && !hasError) {
+        const aMatch = analysisBlock.match(/^\*\*Analysis:?\*\*\s*\n?([\s\S]*)$/);
+        if (aMatch) {
+          const ab = aMatch[1].trim();
+          if (ab) {
+            const d = document.createElement('div');
+            d.innerHTML = '<hr style="border:none;border-top:1px solid var(--border-light);margin:10px 0"><div><em><strong>Analysis</strong></em></div><div>' + renderMarkdown(ab) + '</div>';
+            body.appendChild(d);
+          }
+        }
+      }
+    }
+
+    // Remaining plots
+    while (plotIdx < plots.length) {
+      const src = plots[plotIdx++];
+      const imgSrc = (typeof src === 'string' && src.startsWith('data:')) ? src : `data:image/png;base64,${src}`;
+      const d = document.createElement('div'); d.className = 'chat-plot'; d.innerHTML = `<img src="${imgSrc}" alt="Plot">`; body.appendChild(d);
+    }
+  }
+
   async function restoreChatHistory() {
     try {
       const res = await api.getChatHistory();
       if (!res.success || !res.turns || res.turns.length === 0) return;
 
       const chatEl = document.getElementById('chat-messages');
-      // Remove welcome message
       const welcome = chatEl.querySelector('.chat-welcome');
       if (welcome) welcome.remove();
 
       for (const turn of res.turns) {
-        // User message
+        // For continuation turns (clarification/skill selection/prerequisite replies):
+        // In the live UI, the original query → clarification → user reply → result all
+        // happened in ONE user bubble + ONE assistant bubble. No separate turn was created
+        // for the clarification question — it was just a visual event.
+        //
+        // In memory, only the resolution turn exists: Turn(user="1", assistant="results").
+        // The original query is saved in turn.original_query.
+        //
+        // We reconstruct the full exchange: original query as user bubble, then one
+        // assistant bubble containing: [clarification UI] → [inline reply] → [results].
+
+        // User bubble: show original_query for continuations, otherwise turn.user
+        const userText = (turn.is_continuation && turn.original_query) ? turn.original_query : turn.user;
         const userDiv = document.createElement('div');
         userDiv.className = 'chat-msg user';
-        userDiv.innerHTML = `<div class="chat-msg-body">${escapeHtml(turn.user)}</div>`;
+        userDiv.innerHTML = `<div class="chat-msg-body">${escapeHtml(userText)}</div>`;
         chatEl.appendChild(userDiv);
 
-        // Assistant message — stored in memory as markdown containing:
-        //   text → ```python\ncode\n``` → ```\nstdout\n``` → *(N plot(s) generated)* → **Analysis:**\n...
-        //
-        // During live streaming the user sees:
-        //   agent_text (explanation) → collapsible Output → plots inline → agent_text (analysis)
-        //   Code is NEVER shown. Plots appear where "*(N plot(s))*" markers are.
-        //
-        // We replicate that: skip python fences, collapsible output fences,
-        // replace plot markers with actual plots, render rest as markdown.
+        // Assistant bubble
         const assistDiv = document.createElement('div');
         assistDiv.className = 'chat-msg assistant';
         const body = document.createElement('div');
         body.className = 'chat-msg-body';
 
-        // Replay visual events (planning, steps, skill selection, clarification, etc.)
-        if (turn.visual_events && turn.visual_events.length) {
-          for (const ev of turn.visual_events) {
-            switch (ev.type) {
-              case 'planning_complete': {
-                const steps = Array.isArray(ev.plan || ev.steps) ? (ev.plan || ev.steps) : ((ev.plan && ev.plan.steps) ? ev.plan.steps : []);
-                if (steps.length) {
-                  const stepsHtml = steps.map((s, i) => {
-                    const num = s.step_number || (i + 1);
-                    return `<li class="plan-step done" data-step="${num}"><span class="plan-step-num">${num}</span>${escapeHtml(s.description || '')}</li>`;
-                  }).join('');
-                  body.insertAdjacentHTML('beforeend', `<details class="plan-card"><summary>Plan (${steps.length} steps)</summary><ol class="plan-steps">${stepsHtml}</ol></details>`);
-                }
-                break;
-              }
-              case 'step_start':
-                body.insertAdjacentHTML('beforeend', `<div class="small-info" style="margin:6px 0;font-weight:600">Step ${ev.step_number}${ev.total_steps ? '/' + ev.total_steps : ''}: ${escapeHtml(ev.description || '')}</div>`);
-                break;
-              case 'skill_selection': {
-                const options = ev.options || [];
-                const msg = ev.message || 'Multiple skills matched.';
-                const optHtml = options.map((o, i) =>
-                  `<button class="clarification-option-btn" disabled>${i + 1}. ${escapeHtml(o.name || o.slug)}</button>`
-                ).join('');
-                body.insertAdjacentHTML('beforeend', `<div class="clarification-ui"><div class="question">${escapeHtml(msg)}</div><div class="clarification-options">${optHtml}</div></div>`);
-                break;
-              }
-              case 'clarification_needed': {
-                const q = ev.question || '';
-                let html = `<div class="clarification-ui"><div class="question">${renderMarkdown(q)}</div>`;
-                if (ev.options && ev.options.length) {
-                  html += '<div class="clarification-options">';
-                  ev.options.forEach(o => {
-                    const label = typeof o === 'string' ? o : (o.label || o.name || o);
-                    html += `<button class="clarification-option-btn" disabled>${escapeHtml(label)}</button>`;
-                  });
-                  html += '</div>';
-                }
-                html += '</div>';
-                body.insertAdjacentHTML('beforeend', html);
-                break;
-              }
-              case 'prerequisites_needed': {
-                const questions = ev.questions || [];
-                let html = `<div class="clarification-ui"><div class="question">Prerequisites needed for <strong>${escapeHtml(ev.skill || 'skill')}</strong>:</div>`;
-                html += '<div class="clarification-options">';
-                questions.forEach(q => {
-                  html += `<div style="margin:4px 0"><label style="font-size:12px;display:block;margin-bottom:2px">${escapeHtml(q)}</label></div>`;
-                });
-                html += '</div></div>';
-                body.insertAdjacentHTML('beforeend', html);
-                break;
-              }
-              case 'advice':
-                body.insertAdjacentHTML('beforeend', `<div class="alert-card advice">${renderMarkdown(ev.message)}</div>`);
-                break;
-              case 'warning':
-                body.insertAdjacentHTML('beforeend', `<div class="alert-card warning">${renderMarkdown(ev.message)}</div>`);
-                break;
-              case 'execution_issue':
-                body.insertAdjacentHTML('beforeend', `<div class="alert-card error"><strong>Execution Issue</strong> (${escapeHtml(ev.issue_type || 'error')})<br>${renderMarkdown(ev.explanation || '')}</div>`);
-                break;
-            }
-          }
+        // For continuations, find the clarification visual events from the PREVIOUS
+        // request. These were stored on THIS turn's visual_events since the clarification
+        // request didn't create its own turn. The visual_events list contains both
+        // the clarification event AND the execution events in order.
+
+        _renderVisualEvents(body, turn.visual_events);
+
+        // For continuations, show the user's reply inline (e.g. "↳ 1")
+        if (turn.is_continuation) {
+          body.insertAdjacentHTML('beforeend',
+            `<div class="small-info" style="margin:6px 0;color:var(--text-secondary);font-style:italic">↳ ${escapeHtml(turn.user)}</div>`);
         }
 
-        if (turn.assistant) {
-          const plots = turn.plots || [];
-          let plotIdx = 0;
-          // Track if execution had errors (skip Analysis if so)
-          let hasError = (turn.visual_events || []).some(e => e.type === 'execution_issue');
-
-          // Split on code fences: ```python\n...\n``` and ```\n...\n```
-          const parts = turn.assistant.split(/(```python\n[\s\S]*?```|```\n[\s\S]*?```)/g);
-          for (const part of parts) {
-            // Python code fence → SKIP (not shown during live streaming)
-            if (/^```python\n/.test(part)) continue;
-
-            // Output code fence → collapsible details
-            const outputMatch = part.match(/^```\n([\s\S]*?)```$/);
-            if (outputMatch) {
-              const details = document.createElement('details');
-              details.className = 'exec-details';
-              const summary = document.createElement('summary');
-              summary.textContent = 'Output';
-              details.appendChild(summary);
-              const pre = document.createElement('div');
-              pre.className = 'exec-output';
-              pre.textContent = outputMatch[1];
-              details.appendChild(pre);
-              body.appendChild(details);
-              continue;
-            }
-
-            // Text part — may contain interleaved plot markers, **Error:** and **Analysis:** blocks.
-            // Split into logical blocks first, then render each appropriately.
-            // The memory format puts each on its own line:
-            //   *(N plot(s) generated)*
-            //   **Error:** message
-            //   **Analysis:**\ninterpretation (always last, may be multiline)
-            //
-            // Strategy: split off **Analysis:** first (always at end), then process
-            // remaining line by line for plot markers and **Error:**.
-            let textBody = part;
-            let analysisBlock = null;
-
-            const analysisSplit = textBody.split(/\n(\*\*Analysis:?\*\*\n[\s\S]*)$/);
-            if (analysisSplit.length > 1) {
-              textBody = analysisSplit[0];
-              analysisBlock = analysisSplit[1];
-            }
-
-            // Process line-level markers in the text body
-            const lines = textBody.split('\n');
-            let textBuf = '';
-            for (const line of lines) {
-              // Plot marker
-              const plotMatch = line.match(/^\*?\((\d+) plot\(s\) generated\)\*?$/);
-              if (plotMatch) {
-                // Flush buffered text
-                if (textBuf.trim()) {
-                  const div = document.createElement('div');
-                  div.innerHTML = renderMarkdown(textBuf.trim());
-                  body.appendChild(div);
-                  textBuf = '';
-                }
-                const nPlots = parseInt(plotMatch[1], 10) || 0;
-                for (let p = 0; p < nPlots && plotIdx < plots.length; p++, plotIdx++) {
-                  const src = plots[plotIdx];
-                  const imgSrc = (typeof src === 'string' && src.startsWith('data:')) ? src : `data:image/png;base64,${src}`;
-                  const plotDiv = document.createElement('div');
-                  plotDiv.className = 'chat-plot';
-                  plotDiv.innerHTML = `<img src="${imgSrc}" alt="Plot">`;
-                  body.appendChild(plotDiv);
-                }
-                continue;
-              }
-
-              // **Error:** line
-              const errorMatch = line.match(/^\*\*Error:?\*\*\s*(.*)/);
-              if (errorMatch) {
-                // Flush buffered text
-                if (textBuf.trim()) {
-                  const div = document.createElement('div');
-                  div.innerHTML = renderMarkdown(textBuf.trim());
-                  body.appendChild(div);
-                  textBuf = '';
-                }
-                hasError = true;
-                const div = document.createElement('div');
-                div.className = 'alert-card error';
-                div.innerHTML = '<strong>Execution Error</strong><br>' + renderMarkdown(errorMatch[1]);
-                body.appendChild(div);
-                continue;
-              }
-
-              textBuf += line + '\n';
-            }
-            // Flush remaining text
-            if (textBuf.trim()) {
-              const div = document.createElement('div');
-              div.innerHTML = renderMarkdown(textBuf.trim());
-              body.appendChild(div);
-            }
-
-            // Render **Analysis:** block with styled header (skip if had error)
-            if (analysisBlock) {
-              const aMatch = analysisBlock.match(/^\*\*Analysis:?\*\*\s*\n?([\s\S]*)$/);
-              if (aMatch && !hasError) {
-                const analysisBody = aMatch[1].trim();
-                if (analysisBody) {
-                  const div = document.createElement('div');
-                  div.innerHTML = '<hr style="border:none;border-top:1px solid var(--border-light);margin:10px 0">'
-                    + '<div><em><strong>Analysis</strong></em></div>'
-                    + '<div>' + renderMarkdown(analysisBody) + '</div>';
-                  body.appendChild(div);
-                }
-              }
-            }
-          }
-
-          // Any remaining plots not placed by markers
-          while (plotIdx < plots.length) {
-            const src = plots[plotIdx++];
-            const imgSrc = (typeof src === 'string' && src.startsWith('data:')) ? src : `data:image/png;base64,${src}`;
-            const plotDiv = document.createElement('div');
-            plotDiv.className = 'chat-plot';
-            plotDiv.innerHTML = `<img src="${imgSrc}" alt="Plot">`;
-            body.appendChild(plotDiv);
-          }
-        }
+        _renderAssistantContent(body, turn);
 
         assistDiv.appendChild(body);
         chatEl.appendChild(assistDiv);

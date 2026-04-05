@@ -52,6 +52,7 @@ agent: Optional[SpatialAgent] = None  # LLM-powered agent (optional)
 llm_config: Optional[Dict] = None  # Store LLM config for reuse in skills
 chat_abort_event = threading.Event()  # Signal to abort current chat processing
 chat_busy = False  # True while agent is processing a request
+_pending_visual_events = []  # Visual events from clarification requests (no turn created yet)
 
 
 @app.route('/')
@@ -1206,6 +1207,18 @@ def chat_stream():
             # Use LLM-powered agent if available
             if agent is not None:
                 logger.info("Using LLM-powered agent for streaming response")
+                # Detect if this is a clarification response BEFORE processing
+                _is_continuation = (
+                    hasattr(agent, 'clarification_context')
+                    and agent.clarification_context
+                    and agent.clarification_context.is_waiting_for_clarification()
+                )
+                # Capture the original query before clarification context is cleared
+                _original_query = None
+                if _is_continuation and hasattr(agent, 'clarification_context'):
+                    _original_query = getattr(agent.clarification_context, '_original_query', None)
+                # Track turn count to detect if a new turn was created
+                _turns_before = len(agent.memory.turns) if agent and agent.memory else 0
 
                 # Removed thinking/matching status - only show clarification/prerequisites blocks
                 # yield f"data: {json.dumps({'type': 'progress', 'message': '🤔 Analyzing your request...'})}\n\n"
@@ -1465,12 +1478,26 @@ def chat_stream():
                     thread.join()
                     logger.info("Thread completed")
 
-                    # Save visual events into the last turn's metadata for history restore
-                    if visual_events and agent is not None and agent.memory.turns:
+                    # Save visual events and continuation flag into turn metadata
+                    _turns_after = len(agent.memory.turns) if agent and agent.memory else 0
+                    new_turn_created = _turns_after > _turns_before
+
+                    if new_turn_created and agent is not None:
                         last_turn = agent.memory.turns[-1]
                         if last_turn.metadata is None:
                             last_turn.metadata = {}
-                        last_turn.metadata['visual_events'] = visual_events
+                        # Prepend any pending visual events from previous clarification request
+                        all_visual = list(_pending_visual_events) + visual_events
+                        _pending_visual_events.clear()
+                        if all_visual:
+                            last_turn.metadata['visual_events'] = all_visual
+                        if _is_continuation:
+                            last_turn.metadata['is_continuation'] = True
+                            if _original_query:
+                                last_turn.metadata['original_query'] = _original_query
+                    elif visual_events:
+                        # No turn was created (clarification requested) — save events for next turn
+                        _pending_visual_events.extend(visual_events)
 
                     # Handle celltype color generation if celltypes were updated
                     celltype_updated = len(final_state_changes.get('celltypes_updated', [])) > 0 if final_state_changes else False
@@ -1560,6 +1587,8 @@ def get_chat_history():
                 'code': turn.code_generated,
                 'plots': meta.get('plots', []),
                 'visual_events': meta.get('visual_events', []),
+                'is_continuation': meta.get('is_continuation', False),
+                'original_query': meta.get('original_query', None),
                 'timestamp': turn.timestamp,
             })
 
