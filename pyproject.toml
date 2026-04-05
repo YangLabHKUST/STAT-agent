@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stat-agent"
-version = "0.1.7"
+version = "0.1.8"
 description = "STAT: Spatial Transcriptomics Analytical agenT - AI-powered platform for spatial omics analysis"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -90,6 +90,10 @@ skills = [
     # Spatially variable genes
     "NaiveDE>=0.1",
     "SpatialDE>=1.1",
+
+    # Clustering / graph
+    "scikit-misc>=0.5",
+    "igraph>=0.9",
 
     # Spatial domains (SpaGCN) + alignment (STalign)
     "torch>=2.0",

@@ -1136,10 +1136,12 @@
         break;
       case 'agent_text':
         if (!_isTextDuplicate(event.text)) {
+          _execOutputEl = null;  // Reset so next code block gets its own output section
           appendAgentTextFormatted(event.text);
         }
         break;
       case 'code_block_complete':
+        _execOutputEl = null;  // Reset after code block completes
         renderPlots(_deduplicatePlots(event.plots));
         break;
       case 'execution_issue':
