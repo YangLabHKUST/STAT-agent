@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stat-agent"
-version = "0.1.16"
+version = "0.1.17"
 description = "STAT: Spatial Transcriptomics Analytical agenT - AI-powered platform for spatial omics analysis"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -66,10 +66,11 @@ dependencies = [
 [project.optional-dependencies]
 # All analysis skill dependencies
 skills = [
-    # Neighborhood enrichment, LIANA spatial neighbors
+    # Spatial statistics & neighborhood enrichment
     "squidpy>=1.2",
+    "esda>=2.4.0",
 
-    # GO enrichment
+    # Enrichment (GO, ORA, ssGSEA)
     "gseapy>=1.0",
 
     # Cell communication
@@ -77,27 +78,46 @@ skills = [
     "cellphonedb>=5.0,<6.0",
     "plotnine>=0.12",           # LIANA visualization
 
-    # Batch integration
+    # Batch integration (Harmony, BBKNN, Scanorama)
     "harmonypy>=0.0.9",
+    "bbknn>=1.5.0",
+    "scanorama>=1.7.0",
 
-    # Cell type annotation (scANVI)
+    # Cell type annotation (scANVI, Tangram)
     "scvi-tools>=1.0,<2.0",
+    "tangram-sc>=1.0.0",
 
-    # Deconvolution (RCTD)
+    # Deconvolution (RCTD, FlashDeconv, Cell2location)
     "qpsolvers>=4.0",
     "ray>=2.0",
+    "flashdeconv>=0.1.0",
+    "cell2location>=0.1.4",
+
+    # Trajectory / pseudotime (Palantir)
+    "palantir>=1.0.0",
+
+    # CNV inference
+    "infercnvpy>=0.4.0",
 
     # Spatially variable genes
     "NaiveDE>=0.1",
     "SpatialDE>=1.1",
 
-    # Clustering / graph
+    # Clustering / graph (pin igraph<1.0 for louvain compatibility)
     "scikit-misc>=0.5",
-    "igraph>=0.9",
+    "igraph>=0.9,<1.0",
 
-    # Spatial domains (SpaGCN) + alignment (STalign)
+    # Spatial domains (SpaGCN, STAGATE, GraphST) + alignment (STalign)
     "torch>=2.0",
     "SpaGCN>=1.2.5",
+    "GraphST>=1.1.0",
+    # STAGATE_pyG: pip install git+https://github.com/QIFEIDKN/STAGATE_pyG.git
+    # Also needs: torch_geometric, torch_sparse, torch_scatter (from PyG wheels)
+
+    # Slice registration (PASTE)
+    "paste-bio>=1.0.0",
+    "POT>=0.9.0,<0.9.6",       # 0.9.6 breaks PASTE line_search API
+
     "pynrrd>=1.0",
 ]
 
