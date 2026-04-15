@@ -361,10 +361,14 @@ def detect_data_level(adata: ad.AnnData, filename: str) -> Tuple[str, str]:
     reason : str
         Human-readable detection reason
     """
-    stem = Path(filename).stem
-    if stem.startswith('spot_'):
-        return 'spot', 'filename prefix "spot_"'
-    # Heuristic: Visium typically has <10k spots
+    stem = Path(filename).stem.lower()
+    # 1. Filename contains 'spot' anywhere → spot
+    if 'spot' in stem:
+        return 'spot', f'filename contains "spot" ("{Path(filename).stem}")'
+    # 2. AnnData has spot metadata in .uns → spot
+    if 'spot_diameter' in adata.uns or 'spot_shape' in adata.uns:
+        return 'spot', 'adata.uns contains spot_diameter/spot_shape'
+    # 3. Heuristic: Visium typically has <10k spots
     if adata.n_obs < 10000:
         reason = f'{adata.n_obs} observations < 10,000 threshold'
         logger.info(f"  Auto-detected spot-level data ({reason})")

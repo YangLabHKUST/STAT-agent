@@ -79,6 +79,7 @@
         <span id="session-info" class="session-info"></span>
       </div>
       <nav class="header-nav">
+        <button id="logs-btn" class="btn-header" title="View logs and notebook">Logs</button>
         <button id="notebook-btn" class="btn-header" title="Open Jupyter Notebook">Notebook</button>
         <button id="logout-btn" class="btn-header btn-logout" title="Return to initialization">Logout</button>
       </nav>
@@ -114,6 +115,29 @@
           </div>
         </div>
 
+        <!-- Logs modal -->
+        <div id="logs-modal" class="modal-overlay hidden">
+          <div class="modal-content logs-modal-content">
+            <div class="modal-header">
+              <h3>Session Logs</h3>
+              <button id="logs-modal-close" class="btn-icon" title="Close">&times;</button>
+            </div>
+            <div class="logs-modal-body">
+              <div class="logs-sidebar" id="logs-sidebar">
+                <div class="logs-path" id="logs-path"></div>
+                <div class="logs-nav">
+                  <button class="logs-nav-btn active" data-tab="turns">Turns</button>
+                  <button class="logs-nav-btn" data-tab="notebook">Notebook</button>
+                </div>
+                <div id="logs-turn-list" class="logs-turn-list"></div>
+              </div>
+              <div class="logs-detail" id="logs-detail">
+                <div class="logs-placeholder">Select a turn or click Notebook to view.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="canvas-container" id="canvas-container">
           <canvas id="spatial-canvas"></canvas>
           <div id="canvas-spinner" class="canvas-spinner hidden">
@@ -142,6 +166,9 @@
             <span class="toolbar-sep"></span>
             <span class="toolbar-label">Size</span>
             <input type="range" id="size-slider" min="20" max="300" value="100" class="toolbar-slider" title="Point size">
+            <span class="toolbar-sep"></span>
+            <span class="toolbar-label">Scale</span>
+            <input type="number" id="coord-scale" min="0.01" max="1000" step="any" value="1" class="toolbar-number" title="Coordinate scale factor for point size">
             <span class="toolbar-sep"></span>
             <label class="toolbar-checkbox" title="Hide background image"><input type="checkbox" id="hide-bg-cb"><span class="toolbar-label">Hide BG</span></label>
           </div>

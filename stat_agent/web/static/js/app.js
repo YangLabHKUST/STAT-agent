@@ -27,6 +27,9 @@
     // Canvas cache: keyed by "slice_{id}_{modality}"
     canvases: {},
 
+    // Coordinate scale factor for point rendering
+    coordScale: 1.0,
+
     // Interaction
     isPanning: false,
     panStart: null,
@@ -623,6 +626,156 @@
     return html;
   }
 
+  // ============================================================
+  // SECTION: LOGS MODAL
+  // ============================================================
+
+  let _logsTab = 'turns'; // 'turns' | 'notebook'
+
+  async function openLogsModal() {
+    const modal = document.getElementById('logs-modal');
+    const pathEl = document.getElementById('logs-path');
+    const listEl = document.getElementById('logs-turn-list');
+    const detailEl = document.getElementById('logs-detail');
+    pathEl.textContent = 'Loading...';
+    listEl.innerHTML = '';
+    detailEl.innerHTML = '<div class="logs-placeholder">Loading...</div>';
+    _logsTab = 'turns';
+    _updateLogsNavActive();
+    modal.classList.remove('hidden');
+
+    try {
+      const res = await fetch('/api/logs/info');
+      const data = await res.json();
+      if (data.error) {
+        pathEl.textContent = 'Error: ' + data.error;
+        return;
+      }
+      pathEl.textContent = data.session_dir || 'No session directory';
+      _renderTurnList(data.turns || []);
+      detailEl.innerHTML = '<div class="logs-placeholder">Select a turn to view its prompt log.</div>';
+    } catch (e) {
+      pathEl.textContent = 'Failed to load: ' + e.message;
+    }
+  }
+
+  function closeLogsModal() {
+    document.getElementById('logs-modal').classList.add('hidden');
+  }
+
+  function _updateLogsNavActive() {
+    document.querySelectorAll('.logs-nav-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.tab === _logsTab);
+    });
+  }
+
+  function _renderTurnList(turns) {
+    const listEl = document.getElementById('logs-turn-list');
+    listEl.innerHTML = '';
+    if (!turns.length) {
+      listEl.innerHTML = '<div class="logs-placeholder" style="margin-top:20px">No turns logged yet.</div>';
+      return;
+    }
+    for (const t of turns) {
+      const item = document.createElement('div');
+      item.className = 'logs-turn-item';
+      item.dataset.filename = t.filename;
+      item.innerHTML = `<div class="turn-num">Turn ${t.turn_number} <span class="turn-size">${t.size_kb} KB</span></div>` +
+        `<div class="turn-preview">${escapeHtml(t.preview)}</div>`;
+      item.addEventListener('click', () => _loadTurnDetail(t.filename, item));
+      listEl.appendChild(item);
+    }
+  }
+
+  async function _loadTurnDetail(filename, itemEl) {
+    // Highlight active
+    document.querySelectorAll('.logs-turn-item').forEach(el => el.classList.remove('active'));
+    if (itemEl) itemEl.classList.add('active');
+
+    const detailEl = document.getElementById('logs-detail');
+    detailEl.innerHTML = '<div class="logs-placeholder">Loading...</div>';
+
+    try {
+      const res = await fetch(`/api/logs/turn/${encodeURIComponent(filename)}`);
+      const data = await res.json();
+      if (data.error) {
+        detailEl.innerHTML = `<div class="logs-placeholder">${escapeHtml(data.error)}</div>`;
+        return;
+      }
+      detailEl.innerHTML = '<div class="markdown-body">' + renderMarkdownFull(data.content) + '</div>';
+    } catch (e) {
+      detailEl.innerHTML = `<div class="logs-placeholder">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function _loadNotebookView() {
+    const detailEl = document.getElementById('logs-detail');
+    detailEl.innerHTML = '<div class="logs-placeholder">Loading notebook...</div>';
+    // Deselect turns
+    document.querySelectorAll('.logs-turn-item').forEach(el => el.classList.remove('active'));
+
+    try {
+      const res = await fetch('/api/logs/notebook');
+      const data = await res.json();
+      if (data.error) {
+        detailEl.innerHTML = `<div class="logs-placeholder">${escapeHtml(data.error)}</div>`;
+        return;
+      }
+      detailEl.innerHTML = _renderNotebook(data.notebook);
+    } catch (e) {
+      detailEl.innerHTML = `<div class="logs-placeholder">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function _renderNotebook(nb) {
+    if (!nb || !nb.cells || !nb.cells.length) return '<div class="logs-placeholder">Notebook is empty.</div>';
+    let html = '';
+    for (let i = 0; i < nb.cells.length; i++) {
+      const cell = nb.cells[i];
+      const src = Array.isArray(cell.source) ? cell.source.join('') : (cell.source || '');
+      if (!src.trim()) continue;
+
+      if (cell.cell_type === 'markdown') {
+        html += `<div class="nb-cell"><div class="nb-markdown-cell">${renderMarkdownFull(src)}</div></div>`;
+        continue;
+      }
+
+      // Code cell
+      html += '<div class="nb-cell">';
+      html += `<div class="nb-cell-header"><span class="nb-cell-type">In [${cell.execution_count || ' '}]</span></div>`;
+      html += `<div class="nb-cell-source">${escapeHtml(src)}</div>`;
+
+      // Outputs
+      if (cell.outputs && cell.outputs.length) {
+        html += '<div class="nb-cell-outputs">';
+        for (const out of cell.outputs) {
+          if (out.output_type === 'stream') {
+            const text = Array.isArray(out.text) ? out.text.join('') : (out.text || '');
+            const cls = out.name === 'stderr' ? ' class="nb-stderr"' : '';
+            html += `<span${cls}>${escapeHtml(text)}</span>`;
+          } else if (out.output_type === 'display_data' || out.output_type === 'execute_result') {
+            const imgData = out.data && out.data['image/png'];
+            if (imgData) {
+              html += `<img src="data:image/png;base64,${imgData}" alt="plot">`;
+            }
+            const textData = out.data && out.data['text/plain'];
+            if (textData && !imgData) {
+              const t = Array.isArray(textData) ? textData.join('') : textData;
+              html += `<span>${escapeHtml(t)}</span>`;
+            }
+          } else if (out.output_type === 'error') {
+            const tb = Array.isArray(out.traceback) ? out.traceback.join('\n') : (out.traceback || '');
+            // Strip ANSI escape codes
+            html += `<span class="nb-stderr">${escapeHtml(tb.replace(/\x1b\[[0-9;]*m/g, ''))}</span>`;
+          }
+        }
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    return html;
+  }
+
   const CELL_RADIUS = 3;
   const SPOT_SCALE = 0.5;       // spot_diameter * SPOT_SCALE = canvas radius
   const MIN_ZOOM = 0.1;
@@ -976,9 +1129,10 @@
     const xs = c.cells.x, ys = c.cells.y, cts = c.cells.celltype;
     const sx = el.width / c.viewWidth;
     const sy = el.height / c.viewHeight;
-    const rImg = (c.isSpotData && c.spotInfo ? (c.spotInfo.spot_diameter * SPOT_SCALE) : CELL_RADIUS) * c.pointSize;
+    const rImg = (c.isSpotData && c.spotInfo ? (c.spotInfo.spot_diameter * SPOT_SCALE) : CELL_RADIUS) * c.pointSize * state.coordScale;
     const r = Math.max(rImg * sx, 1);
-    const useCircles = r > 3; // Only draw circles when zoomed in enough to see them
+    const isSquare = c.isSpotData && c.spotInfo && c.spotInfo.spot_shape === 'square';
+    const useCircles = !isSquare && r > 3;
     const cullPad = rImg + 1;
 
     // Batch by color for performance
@@ -999,7 +1153,6 @@
     }
 
     if (useCircles) {
-      // Zoomed in: draw circles (fewer visible cells due to frustum cull)
       for (const [color, coords] of Object.entries(batches)) {
         ctx.beginPath();
         for (let i = 0; i < coords.length; i += 2) {
@@ -1010,7 +1163,6 @@
         ctx.fill();
       }
     } else {
-      // Zoomed out: draw fast rectangles (310k rects is ~50x faster than 310k arcs)
       const size = Math.max(Math.round(r * 2), 1);
       for (const [color, coords] of Object.entries(batches)) {
         ctx.fillStyle = color;
@@ -1029,9 +1181,10 @@
     const emax = c.customVmax != null ? c.customVmax : rawMax;
     const sx = el.width / c.viewWidth;
     const sy = el.height / c.viewHeight;
-    const rImg = (c.isSpotData && c.spotInfo ? (c.spotInfo.spot_diameter * SPOT_SCALE) : CELL_RADIUS) * c.pointSize;
+    const rImg = (c.isSpotData && c.spotInfo ? (c.spotInfo.spot_diameter * SPOT_SCALE) : CELL_RADIUS) * c.pointSize * state.coordScale;
     const r = Math.max(rImg * sx, 1);
-    const useCircles = r > 3;
+    const isSquare = c.isSpotData && c.spotInfo && c.spotInfo.spot_shape === 'square';
+    const useCircles = !isSquare && r > 3;
     const cullPad = rImg + 1;
     const vxMin = c.viewX - cullPad, vxMax = c.viewX + c.viewWidth + cullPad;
     const vyMin = c.viewY - cullPad, vyMax = c.viewY + c.viewHeight + cullPad;
@@ -1079,14 +1232,15 @@
       return;
     }
 
-    // Pie chart mode
+    // Pie chart / stacked-bar mode
     const xs = c.cells.x, ys = c.cells.y;
     const weights = c.spotInfo.deconv_weights;
     const order = c.spotInfo.celltype_order || Object.keys(weights);
     const sx = el.width / c.viewWidth;
     const sy = el.height / c.viewHeight;
-    const rImg = (c.spotInfo.spot_diameter ? (c.spotInfo.spot_diameter * SPOT_SCALE) : 8) * c.pointSize;
+    const rImg = (c.spotInfo.spot_diameter ? (c.spotInfo.spot_diameter * SPOT_SCALE) : 8) * c.pointSize * state.coordScale;
     const r = Math.max(rImg * sx, 2);
+    const isSquare = c.spotInfo.spot_shape === 'square';
 
     for (let i = 0; i < xs.length; i++) {
       const x = xs[i], y = ys[i];
@@ -1102,25 +1256,45 @@
       }
       if (total === 0) continue;
 
-      let startAngle = -Math.PI / 2;
-      for (const ct of order) {
-        const val = weights[ct] ? (weights[ct][i] || 0) : 0;
-        const prop = val / total;
-        if (prop < 0.01) { startAngle += prop * Math.PI * 2; continue; }
-        const sliceAngle = prop * Math.PI * 2;
+      if (isSquare) {
+        // Stacked horizontal bars inside the square
+        const size = r * 2;
+        const left = cx - r, top = cy - r;
+        let xOff = 0;
+        for (const ct of order) {
+          const val = weights[ct] ? (weights[ct][i] || 0) : 0;
+          const prop = val / total;
+          if (prop < 0.01) continue;
+          const w = prop * size;
+          ctx.fillStyle = c.celltypeColors[ct] || '#999';
+          ctx.fillRect(left + xOff, top, w, size);
+          xOff += w;
+        }
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(left, top, size, size);
+      } else {
+        // Pie chart
+        let startAngle = -Math.PI / 2;
+        for (const ct of order) {
+          const val = weights[ct] ? (weights[ct][i] || 0) : 0;
+          const prop = val / total;
+          if (prop < 0.01) { startAngle += prop * Math.PI * 2; continue; }
+          const sliceAngle = prop * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.arc(cx, cy, r, startAngle, startAngle + sliceAngle);
+          ctx.closePath();
+          ctx.fillStyle = c.celltypeColors[ct] || '#999';
+          ctx.fill();
+          startAngle += sliceAngle;
+        }
         ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.arc(cx, cy, r, startAngle, startAngle + sliceAngle);
-        ctx.closePath();
-        ctx.fillStyle = c.celltypeColors[ct] || '#999';
-        ctx.fill();
-        startAngle += sliceAngle;
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
       }
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
-      ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-      ctx.lineWidth = 0.5;
-      ctx.stroke();
     }
   }
 
@@ -1132,9 +1306,10 @@
     const vals = weights[ct];
     const sx = el.width / c.viewWidth;
     const sy = el.height / c.viewHeight;
-    const rImg = (c.isSpotData && c.spotInfo ? (c.spotInfo.spot_diameter * SPOT_SCALE) : CELL_RADIUS) * c.pointSize;
+    const rImg = (c.isSpotData && c.spotInfo ? (c.spotInfo.spot_diameter * SPOT_SCALE) : CELL_RADIUS) * c.pointSize * state.coordScale;
     const r = Math.max(rImg * sx, 1);
-    const useCircles = r > 3;
+    const isSquare = c.isSpotData && c.spotInfo && c.spotInfo.spot_shape === 'square';
+    const useCircles = !isSquare && r > 3;
     const vmax = c.customVmax != null ? c.customVmax : 1.0;
     const cullPad = rImg + 1;
     const vxMin = c.viewX - cullPad, vxMax = c.viewX + c.viewWidth + cullPad;
@@ -2903,6 +3078,21 @@
     // Logout
     document.getElementById('logout-btn').addEventListener('click', () => logout());
 
+    // Logs modal
+    document.getElementById('logs-btn').addEventListener('click', () => openLogsModal());
+    document.getElementById('logs-modal-close').addEventListener('click', () => closeLogsModal());
+    document.getElementById('logs-modal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeLogsModal();
+    });
+    document.querySelectorAll('.logs-nav-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        _logsTab = btn.dataset.tab;
+        _updateLogsNavActive();
+        if (_logsTab === 'notebook') _loadNotebookView();
+        else document.getElementById('logs-detail').innerHTML = '<div class="logs-placeholder">Select a turn to view its prompt log.</div>';
+      });
+    });
+
     // Skill panel
     document.getElementById('skill-panel-tab').addEventListener('click', () => toggleSkillPanel());
     document.getElementById('skill-detail-close').addEventListener('click', () => closeSkillDetail());
@@ -2992,6 +3182,15 @@
       if (!c) return;
       c.pointSize = parseInt(document.getElementById('size-slider').value) / 100;
       render();
+    });
+
+    // Coordinate scale factor
+    document.getElementById('coord-scale').addEventListener('change', () => {
+      const val = parseFloat(document.getElementById('coord-scale').value);
+      if (val > 0 && isFinite(val)) {
+        state.coordScale = val;
+        render();
+      }
     });
 
     // Hide background checkbox
@@ -3189,18 +3388,22 @@
     }
   }
 
-  function renderSliceToCanvas(sliceId, modality, displayW, displayH) {
+  function renderSliceToCanvas(sliceId, modality, displayW, displayH, bounds) {
     const key = getCanvasKey(sliceId, modality);
     const c = state.canvases[key];
     if (!c || !c.loaded) return null;
 
-    // Render at full image resolution (capped at 2048 for perf), CSS scales down
-    const imgW = c.imageWidth || displayW;
-    const imgH = c.imageHeight || displayH;
+    // Use data bounds if provided, otherwise full image
+    const vx = bounds ? bounds.vx : 0;
+    const vy = bounds ? bounds.vy : 0;
+    const vw = bounds ? bounds.w : (c.imageWidth || displayW);
+    const vh = bounds ? bounds.h : (c.imageHeight || displayH);
+
+    // Render resolution capped at 2048 for perf
     const maxDim = 2048;
-    const resFactor = Math.min(maxDim / Math.max(imgW, imgH), 1);
-    const renderW = Math.round(imgW * resFactor);
-    const renderH = Math.round(imgH * resFactor);
+    const resFactor = Math.min(maxDim / Math.max(vw, vh), 1);
+    const renderW = Math.round(vw * resFactor);
+    const renderH = Math.round(vh * resFactor);
 
     const offscreen = document.createElement('canvas');
     offscreen.width = renderW;
@@ -3209,20 +3412,20 @@
     offscreen.style.height = displayH + 'px';
     const ctx = offscreen.getContext('2d');
 
-    // Draw image or white bg at full resolution
+    // Draw image cropped to the data bounds region
     if (c.image && !c.hideBackground) {
-      ctx.drawImage(c.image, 0, 0, imgW, imgH, 0, 0, renderW, renderH);
+      ctx.drawImage(c.image, vx, vy, vw, vh, 0, 0, renderW, renderH);
     } else {
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, renderW, renderH);
     }
 
-    // Draw cells at full resolution
+    // Draw cells within the data bounds viewport
     const fakeEl = { width: renderW, height: renderH };
     const saved = { vx: c.viewX, vy: c.viewY, vw: c.viewWidth, vh: c.viewHeight };
-    c.viewX = 0; c.viewY = 0;
-    c.viewWidth = imgW;
-    c.viewHeight = imgH;
+    c.viewX = vx; c.viewY = vy;
+    c.viewWidth = vw;
+    c.viewHeight = vh;
 
     ctx.globalAlpha = c.opacity;
     if (c.vizMode === 'celltype') {
@@ -3256,13 +3459,28 @@
     });
     if (slices.length === 0) return;
 
-    // Get per-slice dimensions, find max for uniform display width
-    const sliceDims = slices.map(s => {
+    // Compute per-slice data bounding box from cell coordinates.
+    // Use data extent (not image size) to avoid huge empty space.
+    const sliceBounds = slices.map(s => {
       const c = state.canvases[getCanvasKey(s.slice_id, s.modality)];
-      return { w: c?.imageWidth || 400, h: c?.imageHeight || 400 };
+      if (!c) return { vx: 0, vy: 0, w: 400, h: 400 };
+      const imgW = c.imageWidth || 400, imgH = c.imageHeight || 400;
+      if (c.cells && c.cells.x && c.cells.x.length > 0) {
+        let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+        const xs = c.cells.x, ys = c.cells.y;
+        for (let i = 0; i < xs.length; i++) {
+          if (xs[i] < xmin) xmin = xs[i];
+          if (xs[i] > xmax) xmax = xs[i];
+          if (ys[i] < ymin) ymin = ys[i];
+          if (ys[i] > ymax) ymax = ys[i];
+        }
+        const pad = Math.max((xmax - xmin), (ymax - ymin)) * 0.05;
+        return { vx: xmin - pad, vy: ymin - pad, w: (xmax - xmin) + pad * 2, h: (ymax - ymin) + pad * 2 };
+      }
+      return { vx: 0, vy: 0, w: imgW, h: imgH };
     });
-    const maxW = Math.max(...sliceDims.map(d => d.w));
-    const maxH = Math.max(...sliceDims.map(d => d.h));
+    const maxW = Math.max(...sliceBounds.map(d => d.w));
+    const maxH = Math.max(...sliceBounds.map(d => d.h));
 
     // Size planes to fill the view well:
     // - Horizontally: use up to 75% of container width
@@ -3282,13 +3500,12 @@
       const c = state.canvases[getCanvasKey(s.slice_id, s.modality)];
       if (!c) return;
 
-      // Per-slice aspect ratio
-      const sw = c.imageWidth || 400;
-      const sh = c.imageHeight || 400;
+      // Per-slice aspect ratio from data bounds
+      const bounds = sliceBounds[i];
       const planeW = displayW;
-      const planeH = Math.round(displayW * (sh / sw));
+      const planeH = Math.round(displayW * (bounds.h / bounds.w));
 
-      const offscreen = renderSliceToCanvas(s.slice_id, s.modality, planeW, planeH);
+      const offscreen = renderSliceToCanvas(s.slice_id, s.modality, planeW, planeH, bounds);
       if (!offscreen) return;
 
       const plane = document.createElement('div');

@@ -31,7 +31,64 @@ Identify **spatially variable genes (SVGs)** using **SpatialDE**, which applies 
 
 ---
 
-## Workflow
+## Important: Cell-Level vs Spot-Level
+
+SpatialDE works best on **spot-level** data (e.g., Visium, ~3-10K spots). For **cell-level** data (e.g., MERFISH, >10K cells), use **squidpy's Moran's I** instead — it is faster and handles large datasets.
+
+**Decision rule**: If `adata.n_obs > 10000`, use Moran's I (squidpy). Otherwise, use SpatialDE.
+
+For cell-level data (>10K cells), use this workflow instead of the SpatialDE stages below:
+```python
+import scanpy as sc
+import squidpy as sq
+import numpy as np
+
+slice_obj = session.get_slice(0)
+adata = slice_obj.adata.copy()
+adata.var_names_make_unique()
+print(f"Data: {adata.n_obs} cells, {adata.n_vars} genes")
+
+# Preprocess
+sc.pp.normalize_total(adata, target_sum=1e4)
+sc.pp.log1p(adata)
+sc.pp.highly_variable_genes(adata, n_top_genes=min(2000, adata.n_vars))
+adata_hvg = adata[:, adata.var['highly_variable']].copy()
+
+# Build spatial graph
+sq.gr.spatial_neighbors(adata_hvg, coord_type='generic', n_neighs=10)
+
+# Run Moran's I
+sq.gr.spatial_autocorr(adata_hvg, mode='moran', n_perms=100, n_jobs=1)
+results = adata_hvg.uns['moranI'].copy()
+results = results.sort_values('I', ascending=False)
+
+# Store results back
+adata.var['moran_I'] = np.nan
+adata.var.loc[results.index, 'moran_I'] = results['I']
+adata.var['moran_pval'] = np.nan
+adata.var.loc[results.index, 'moran_pval'] = results['pval_norm']
+adata.var['moran_qval'] = np.nan
+from statsmodels.stats.multitest import multipletests
+_, qvals, _, _ = multipletests(results['pval_norm'].values, method='fdr_bh')
+adata.var.loc[results.index, 'moran_qval'] = qvals
+
+sig = results[results['pval_norm'] < 0.05]
+print(f"\nFound {len(sig)} spatially variable genes (p < 0.05)")
+print(f"\nTop 20 SVGs by Moran's I:")
+for _, row in results.head(20).iterrows():
+    print(f"  {row.name}: I={row['I']:.4f}, p={row['pval_norm']:.2e}")
+
+# Save to session
+slice_obj.adata.var['moran_I'] = adata.var['moran_I']
+slice_obj.adata.var['moran_pval'] = adata.var['moran_pval']
+slice_obj.adata.var['moran_qval'] = adata.var['moran_qval']
+slice_obj.adata.uns['spatially_variable_genes'] = results.head(100).index.tolist()
+print("\n✓ Results stored in adata.var['moran_I'], adata.var['moran_pval'], adata.var['moran_qval']")
+```
+
+---
+
+## Workflow (SpatialDE — for spot-level data, ≤10K spots)
 
 ### Stage 1: Load and Validate
 

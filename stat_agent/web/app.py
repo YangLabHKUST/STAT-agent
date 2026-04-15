@@ -328,6 +328,105 @@ def get_notebook_url():
     })
 
 
+@app.route('/api/logs/info', methods=['GET'])
+def get_logs_info():
+    """Return session log directory path and list of turn log files."""
+    global agent
+    if agent is None:
+        return jsonify({'error': 'Agent not initialized'}), 400
+    try:
+        session_dir = agent.notebook_logger.get_session_dir() if agent.notebook_logger else None
+        if not session_dir or not session_dir.exists():
+            # Fallback to prompt_logger session_dir
+            session_dir = agent.prompt_logger.session_dir if agent.prompt_logger else None
+        if not session_dir or not session_dir.exists():
+            return jsonify({'session_dir': None, 'turns': [], 'notebook_exists': False})
+
+        # List turn files
+        turns = []
+        for f in sorted(session_dir.glob('turn_*.md')):
+            # Extract turn number and read first few lines for summary
+            name = f.stem  # e.g. turn_001_20260402_142714
+            parts = name.split('_')
+            turn_num = int(parts[1]) if len(parts) > 1 else 0
+            # Read first user query line for preview
+            preview = ''
+            try:
+                with open(f, 'r', encoding='utf-8') as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if line and not line.startswith('#') and not line.startswith('---') and not line.startswith('```'):
+                            preview = line[:120]
+                            break
+            except Exception:
+                pass
+            turns.append({
+                'filename': f.name,
+                'turn_number': turn_num,
+                'preview': preview,
+                'size_kb': round(f.stat().st_size / 1024, 1),
+            })
+
+        notebook_file = agent.notebook_logger.notebook_file if agent.notebook_logger else None
+        notebook_exists = notebook_file is not None and notebook_file.exists()
+
+        return jsonify({
+            'session_dir': str(session_dir),
+            'turns': turns,
+            'notebook_exists': notebook_exists,
+        })
+    except Exception as e:
+        logger.error(f"Failed to get logs info: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/logs/turn/<filename>', methods=['GET'])
+def get_turn_log(filename):
+    """Return contents of a specific turn log file."""
+    global agent
+    if agent is None:
+        return jsonify({'error': 'Agent not initialized'}), 400
+    try:
+        session_dir = agent.notebook_logger.get_session_dir() if agent.notebook_logger else None
+        if not session_dir:
+            session_dir = agent.prompt_logger.session_dir if agent.prompt_logger else None
+        if not session_dir:
+            return jsonify({'error': 'No session directory'}), 404
+
+        # Sanitize filename to prevent path traversal
+        from pathlib import PurePosixPath
+        safe_name = PurePosixPath(filename).name
+        filepath = session_dir / safe_name
+        if not filepath.exists() or not filepath.suffix == '.md':
+            return jsonify({'error': 'Turn log not found'}), 404
+
+        content = filepath.read_text(encoding='utf-8')
+        return jsonify({'filename': safe_name, 'content': content})
+    except Exception as e:
+        logger.error(f"Failed to read turn log: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/logs/notebook', methods=['GET'])
+def get_notebook_content():
+    """Return the notebook JSON for read-only viewing."""
+    global agent
+    if agent is None:
+        return jsonify({'error': 'Agent not initialized'}), 400
+    try:
+        notebook_file = agent.notebook_logger.notebook_file if agent.notebook_logger else None
+        if not notebook_file or not notebook_file.exists():
+            return jsonify({'error': 'Notebook not found'}), 404
+
+        import json as _json
+        with open(notebook_file, 'r', encoding='utf-8') as f:
+            nb = _json.load(f)
+        return jsonify({'notebook': nb})
+    except Exception as e:
+        logger.error(f"Failed to read notebook: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/image/data', methods=['GET'])
 def get_image_data():
     """
