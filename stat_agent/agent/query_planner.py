@@ -138,8 +138,8 @@ class QueryPlanner:
                     'model': getattr(self.llm.config, 'model', 'unknown'),
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'duration': call_duration,
-                    'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                    'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                    'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                    'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
                 }
             )
 

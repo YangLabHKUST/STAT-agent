@@ -65,6 +65,10 @@ class PromptLogger:
         self.llm_call_count: int = 0
         self.turn_start_time: Optional[datetime] = None
 
+        # Accumulated token counters for current turn
+        self._turn_input_tokens: int = 0
+        self._turn_output_tokens: int = 0
+
         # Create log directory if enabled
         if self.enabled:
             self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -105,6 +109,8 @@ class PromptLogger:
 
         self.turn_number += 1
         self.llm_call_count = 0
+        self._turn_input_tokens = 0
+        self._turn_output_tokens = 0
         self.turn_start_time = datetime.now()
         self.current_turn_content = []
 
@@ -181,6 +187,15 @@ class PromptLogger:
         entry += "---\n\n"
 
         self.current_turn_content.append(entry)
+
+        # Accumulate token counts
+        in_tok = metadata.get('input_tokens')
+        out_tok = metadata.get('output_tokens')
+        if isinstance(in_tok, (int, float)):
+            self._turn_input_tokens += int(in_tok)
+        if isinstance(out_tok, (int, float)):
+            self._turn_output_tokens += int(out_tok)
+
         logger.debug(f"Logged LLM call {self.llm_call_count}: {call_type}")
 
     def log_clarification(self,
@@ -230,23 +245,31 @@ class PromptLogger:
 
         logger.info(f"PromptLogger: Ending turn {self.turn_number}, logged {self.llm_call_count} LLM calls")
 
-        # Add summary section
-        if summary:
-            summary_section = "## Summary\n\n"
-            if 'total_llm_calls' in summary:
-                summary_section += f"- **Total LLM calls:** {summary['total_llm_calls']}\n"
-            if 'total_input_tokens' in summary:
-                summary_section += f"- **Total input tokens:** {summary['total_input_tokens']}\n"
-            if 'total_output_tokens' in summary:
-                summary_section += f"- **Total output tokens:** {summary['total_output_tokens']}\n"
-            if 'total_duration' in summary:
-                summary_section += f"- **Total duration:** {summary['total_duration']:.2f}s\n"
+        # Build summary from accumulated counters + caller overrides
+        if summary is None:
+            summary = {}
 
-            if self.turn_start_time:
-                turn_end_time = datetime.now()
-                summary_section += f"- **Turn completed:** {turn_end_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        llm_calls = summary.get('total_llm_calls') or self.llm_call_count
+        in_tokens = summary.get('total_input_tokens') or self._turn_input_tokens
+        out_tokens = summary.get('total_output_tokens') or self._turn_output_tokens
+        duration = summary.get('total_duration')
 
-            self.current_turn_content.append(summary_section)
+        summary_section = "## Summary\n\n"
+        summary_section += f"- **Total LLM calls:** {llm_calls}\n"
+        summary_section += f"- **Total input tokens:** {in_tokens}\n"
+        summary_section += f"- **Total output tokens:** {out_tokens}\n"
+        if duration is not None:
+            summary_section += f"- **Total duration:** {duration:.2f}s\n"
+
+        if self.turn_start_time:
+            turn_end_time = datetime.now()
+            elapsed = (turn_end_time - self.turn_start_time).total_seconds()
+            summary_section += f"- **Turn completed:** {turn_end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+            if duration is None:
+                summary_section += f" ({elapsed:.1f}s)"
+            summary_section += "\n"
+
+        self.current_turn_content.append(summary_section)
 
         # Write to file
         try:
@@ -260,6 +283,8 @@ class PromptLogger:
         # Reset state
         self.current_turn_content = []
         self.llm_call_count = 0
+        self._turn_input_tokens = 0
+        self._turn_output_tokens = 0
 
     def disable(self) -> None:
         """Disable logging."""

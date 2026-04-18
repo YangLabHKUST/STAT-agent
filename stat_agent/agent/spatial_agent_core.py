@@ -964,11 +964,8 @@ class SpatialAgent:
             logger.info("Starting new conversation turn")
             self.prompt_logger.start_turn(user_message)
 
-        # Track timing and tokens for logging
+        # Track timing for logging
         turn_start = time.time()
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_llm_calls = 0
 
         # State change tracking: take before_state ONLY on new turns
         if not is_clarification_response:
@@ -1042,9 +1039,6 @@ class SpatialAgent:
             # Final response - end the turn
             turn_duration = time.time() - turn_start
             self.prompt_logger.end_turn({
-                'total_llm_calls': total_llm_calls,
-                'total_input_tokens': total_input_tokens,
-                'total_output_tokens': total_output_tokens,
                 'total_duration': turn_duration
             })
             logger.info(f"Turn completed (final response)")
@@ -1210,9 +1204,6 @@ class SpatialAgent:
 
         # Track timing for logging
         turn_start = time.time()
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_llm_calls = 0
 
         # State change tracking: take before_state ONLY on new turns
         if not is_clarification_response:
@@ -1274,9 +1265,6 @@ class SpatialAgent:
             # Final response - end the turn
             turn_duration = time.time() - turn_start
             self.prompt_logger.end_turn({
-                'total_llm_calls': total_llm_calls,
-                'total_input_tokens': total_input_tokens,
-                'total_output_tokens': total_output_tokens,
                 'total_duration': turn_duration
             })
             logger.info("chat_with_events: Turn completed (final response)")
@@ -1384,9 +1372,6 @@ class SpatialAgent:
             # Final response - end the turn
             turn_duration = time.time() - turn_start
             self.prompt_logger.end_turn({
-                'total_llm_calls': 0,  # Note: Token tracking happens in LLM layer
-                'total_input_tokens': 0,
-                'total_output_tokens': 0,
                 'total_duration': turn_duration
             })
             logger.info("_chat_with_events_via_orchestrator: Turn completed")
@@ -1471,8 +1456,8 @@ class SpatialAgent:
                 'model': self.llm.config.model,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'duration': call_duration,
-                'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
                 'matched_skills': matched_skill_slugs if matched_skill_slugs else None,
             }
         )
@@ -1635,8 +1620,8 @@ class SpatialAgent:
                 'model': self.llm.config.model,
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'duration': call_duration,
-                'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
             }
         )
 
@@ -2789,8 +2774,8 @@ Output valid JSON only:"""
                 metadata={
                     'model': self.llm.config.model,
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                    'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                    'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                    'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
                 }
             )
 
@@ -2901,8 +2886,8 @@ Response (JSON array only):"""
                     'model': self.llm.config.model,
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'duration': call_duration,
-                    'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                    'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                    'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                    'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
                 }
             )
 
@@ -4011,8 +3996,8 @@ Response (JSON array only):"""
                         'model': getattr(self.llm.config, 'model', 'unknown'),
                         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'duration': call_duration,
-                        'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                        'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                        'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                        'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
                         'available_skills': list(available_skills.keys()),
                         'top_k': top_k
                     }
@@ -4129,8 +4114,8 @@ Return JSON:
                     'model': self.llm.config.model,
                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                     'duration': call_duration,
-                    'input_tokens': getattr(self.llm, 'last_input_tokens', None),
-                    'output_tokens': getattr(self.llm, 'last_output_tokens', None),
+                    'input_tokens': self.llm.last_usage.input_tokens if self.llm.last_usage else None,
+                    'output_tokens': self.llm.last_usage.output_tokens if self.llm.last_usage else None,
                 }
             )
 

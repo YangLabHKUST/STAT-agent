@@ -167,7 +167,7 @@ slice_obj.adata.uns['go_params'] = {
     'go_library': go_library,
     'fdr_threshold': fdr_threshold,
     'n_significant': len(significant),
-    'background_size': len(background),
+    'background_size': len(slice_obj.adata.var_names),
 }
 
 # Print top results
