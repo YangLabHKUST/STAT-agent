@@ -309,7 +309,7 @@ def SpatialRNA(coords, counts, nUMI = None):
     spatialrna_dict['nUMI'] = nUMI
     return spatialrna_dict
 
-def Reference(counts, cell_types, nUMI = None, n_max_cells = 10000, loggings=None):
+def Reference(counts, cell_types, nUMI = None, n_max_cells = 10000, loggings=logger):
     reference_dict = {}
     reference_dict['cell_types'] = cell_types
     reference_dict['counts'] = counts
