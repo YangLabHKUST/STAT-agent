@@ -10,9 +10,9 @@ filter_requirements:
 
 prerequisites:
   - Which slice IDs to integrate (at least 2 gene-expression slices)
-  - Optional: path to a reference scRNA-seq h5ad file with celltype annotations
-  - Optional: whether to use KNN label transfer from reference (if slices lack celltypes)
-default_skill: false
+  - "Optional: path to a reference scRNA-seq h5ad file with celltype annotations"
+  - "Optional: whether to use KNN label transfer from reference (if slices lack celltypes)"
+default_skill: true
 ---
 
 # Batch Integration Using Harmony

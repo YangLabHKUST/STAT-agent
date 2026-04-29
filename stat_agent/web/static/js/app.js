@@ -881,14 +881,14 @@
   const _globalCelltypeColors = {};
 
   function getOrAssignColor(name, canvasColors) {
-    // 1. Already in global registry
-    if (_globalCelltypeColors[name]) return _globalCelltypeColors[name];
-    // 2. Backend assigned a color on some canvas — adopt it globally
+    // 1. Backend authority — colour from this overlay response wins, refresh the cache
     if (canvasColors && canvasColors[name]) {
       _globalCelltypeColors[name] = canvasColors[name];
       return canvasColors[name];
     }
-    // 3. Check all loaded canvases for an existing color
+    // 2. Reuse globally remembered colour so the same celltype stays consistent across canvases
+    if (_globalCelltypeColors[name]) return _globalCelltypeColors[name];
+    // 3. Adopt a colour already assigned on another loaded canvas
     for (const key of Object.keys(state.canvases)) {
       const cc = state.canvases[key].celltypeColors;
       if (cc && cc[name]) {
@@ -896,7 +896,7 @@
         return cc[name];
       }
     }
-    // 4. Generate a stable color from name hash
+    // 4. Generate a stable colour from name hash
     let hash = 0;
     for (let i = 0; i < name.length; i++) {
       hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
@@ -3459,12 +3459,16 @@
     });
     if (slices.length === 0) return;
 
-    // Compute per-slice data bounding box from cell coordinates.
-    // Use data extent (not image size) to avoid huge empty space.
+    // Get per-slice dimensions from image size (or cell bounds for scatter-only data)
     const sliceBounds = slices.map(s => {
       const c = state.canvases[getCanvasKey(s.slice_id, s.modality)];
       if (!c) return { vx: 0, vy: 0, w: 400, h: 400 };
-      const imgW = c.imageWidth || 400, imgH = c.imageHeight || 400;
+      const imgW = c.imageWidth || 0, imgH = c.imageHeight || 0;
+      // Use image size when available (most common case)
+      if (imgW > 0 && imgH > 0 && c.image) {
+        return { vx: 0, vy: 0, w: imgW, h: imgH };
+      }
+      // No image (scatter only): use cell coordinate bounds
       if (c.cells && c.cells.x && c.cells.x.length > 0) {
         let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
         const xs = c.cells.x, ys = c.cells.y;
@@ -3477,7 +3481,7 @@
         const pad = Math.max((xmax - xmin), (ymax - ymin)) * 0.05;
         return { vx: xmin - pad, vy: ymin - pad, w: (xmax - xmin) + pad * 2, h: (ymax - ymin) + pad * 2 };
       }
-      return { vx: 0, vy: 0, w: imgW, h: imgH };
+      return { vx: 0, vy: 0, w: imgW || 400, h: imgH || 400 };
     });
     const maxW = Math.max(...sliceBounds.map(d => d.w));
     const maxH = Math.max(...sliceBounds.map(d => d.h));
@@ -3500,10 +3504,10 @@
       const c = state.canvases[getCanvasKey(s.slice_id, s.modality)];
       if (!c) return;
 
-      // Per-slice aspect ratio from data bounds
+      // Per-slice dimensions scaled to its own data bounds (not uniform maxW)
       const bounds = sliceBounds[i];
-      const planeW = displayW;
-      const planeH = Math.round(displayW * (bounds.h / bounds.w));
+      const planeW = Math.round(bounds.w * fitScale);
+      const planeH = Math.round(bounds.h * fitScale);
 
       const offscreen = renderSliceToCanvas(s.slice_id, s.modality, planeW, planeH, bounds);
       if (!offscreen) return;

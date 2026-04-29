@@ -11,7 +11,7 @@ filter_requirements:
 
 prerequisites:
   - Cell type annotations (recommended for interpreting trajectory)
-  - Root cell type or root cell hint (e.g., 'stem cells', 'progenitors')
+  - "Root cell type or root cell hint (e.g., 'stem cells', 'progenitors')"
 
 default_skill: false
 ---

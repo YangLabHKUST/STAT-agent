@@ -10,7 +10,7 @@ filter_requirements:
   data_levels: [spot]
 
 prerequisites:
-  - Number of expected spatial domains (optional, default auto-detected)
+  - "Number of expected spatial domains (optional, default auto-detected)"
 
 default_skill: false
 ---

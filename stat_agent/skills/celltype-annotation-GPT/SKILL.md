@@ -10,7 +10,7 @@ filter_requirements:
   data_levels: [cell]
 
 prerequisites:
-  - Tissue type information (e.g., breast cancer, brain cortex, liver)
+  - "Tissue type information (e.g., breast cancer, brain cortex, liver)"
 default_skill: true
 ---
 

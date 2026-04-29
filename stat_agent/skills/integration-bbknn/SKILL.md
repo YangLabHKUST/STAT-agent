@@ -10,7 +10,7 @@ filter_requirements:
 prerequisites:
   - Multiple slices loaded in session
 
-default_skill: true
+default_skill: false
 ---
 
 # Batch Integration (BBKNN)

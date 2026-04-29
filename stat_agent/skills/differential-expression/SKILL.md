@@ -8,7 +8,7 @@ filter_requirements:
   modalities: [gene]
 
 prerequisites:
-  - Understanding of what the user wants to compare (e.g., cell types within a slice, same cell type across slices, cells in different ROIs, etc.)
+  - "Understanding of what the user wants to compare (e.g., cell types within a slice, same cell type across slices, cells in different ROIs, etc.)"
 
 default_skill: true
 ---

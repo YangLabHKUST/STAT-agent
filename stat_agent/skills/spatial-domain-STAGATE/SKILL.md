@@ -10,7 +10,7 @@ filter_requirements:
   data_levels: [cell/spot]
 
 prerequisites:
-  - Number of expected spatial domains (optional, default auto-detected via leiden)
+  - "Number of expected spatial domains (optional, default auto-detected via leiden)"
 
 default_skill: false
 ---

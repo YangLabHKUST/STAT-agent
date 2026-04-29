@@ -8,7 +8,7 @@ filter_requirements:
   modalities: [gene]
 
 prerequisites:
-  - A list of gene provided by user, or a gene list stored in adata.uns['go_genes']
+  - "A list of gene provided by user, or a gene list stored in adata.uns['go_genes']"
   - Species (human or mouse)
 default_skill: true
 ---

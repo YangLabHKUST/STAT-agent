@@ -10,9 +10,9 @@ filter_requirements:
   data_levels: [cell/spot]
 
 prerequisites:
-  - Cell type annotations in adata.obs['celltype']
-  - Identification of normal/reference cell types (e.g., 'Fibroblast', 'Endothelial')
-  - Genomic position annotation in adata.var (columns: 'chromosome', 'start', 'end') — if missing, will be added from gene name lookup
+  - "Cell type annotations in adata.obs['celltype']"
+  - "Identification of normal/reference cell types (e.g., 'Fibroblast', 'Endothelial')"
+  - "Genomic position annotation in adata.var (columns: 'chromosome', 'start', 'end') — if missing, will be added from gene name lookup"
 
 default_skill: False
 ---

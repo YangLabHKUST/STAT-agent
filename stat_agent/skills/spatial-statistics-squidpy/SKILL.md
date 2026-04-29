@@ -10,8 +10,8 @@ filter_requirements:
   data_levels: [cell/spot]
 
 prerequisites:
-  - For gene-level analysis (Moran's I): gene names of interest
-  - For cell-type-level analysis (Ripley's K, co-occurrence, centrality): cell type annotations in adata.obs['celltype']
+  - "For gene-level analysis (Moran's I): gene names of interest"
+  - "For cell-type-level analysis (Ripley's K, co-occurrence, centrality): cell type annotations in adata.obs['celltype']"
 
 default_skill: true
 ---

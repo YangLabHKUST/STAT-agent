@@ -10,7 +10,7 @@ filter_requirements:
   data_levels: [cell]
 
 prerequisites:
-  - Cell type annotations in target slice (adata.obs['celltype'])
+  - "Cell type annotations in target slice (adata.obs['celltype'])"
 default_skill: true
 ---
 

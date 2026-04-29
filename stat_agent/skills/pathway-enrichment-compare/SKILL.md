@@ -8,7 +8,7 @@ filter_requirements:
   modalities: [gene]
 
 prerequisites:
-  - Two gene lists stored as a dict in adata.uns['enrichment_genes_groups'], e.g. {"group_a": [...], "group_b": [...]}
+  - "Two gene lists stored as a dict in adata.uns['enrichment_genes_groups'], e.g. {group_a: [...], group_b: [...]}"
   - Species (human or mouse)
 ---
 

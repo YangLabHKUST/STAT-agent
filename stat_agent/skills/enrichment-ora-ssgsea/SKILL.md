@@ -8,7 +8,7 @@ filter_requirements:
   modalities: [gene]
 
 prerequisites:
-  - A gene list (user-provided, or shown how to obtain from data such as DE results, SVG results, or any other gene selection)
+  - "A gene list (user-provided, or shown how to obtain from data such as DE results, SVG results, or any other gene selection)"
   - Species (human or mouse)
 
 default_skill: False

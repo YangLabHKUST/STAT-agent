@@ -10,7 +10,7 @@ filter_requirements:
   data_levels: [cell/spot]
 
 prerequisites:
-  - Pathway or gene set name (e.g., 'HALLMARK_INFLAMMATORY_RESPONSE', 'KEGG_APOPTOSIS'), or a custom gene set dict
+  - "Pathway or gene set name (e.g., 'HALLMARK_INFLAMMATORY_RESPONSE', 'KEGG_APOPTOSIS'), or a custom gene set dict"
   - Species (human or mouse)
 
 default_skill: false
