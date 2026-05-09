@@ -54,7 +54,20 @@
     custom:    { models: 'Enter any model ID',                                                              placeholder: '' },
   };
 
+  // Track the most recently displayed provider so we can stash the user's
+  // in-progress entries before switching to a different one.
+  let _activeProvider = null;
+
   function onProviderChange() {
+    // Stash whatever the user has typed for the previous provider so it
+    // isn't lost when they switch — even if they never click Load Dataset.
+    if (_activeProvider) {
+      PROVIDER_FIELDS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) localStorage.setItem(providerStorageKey(_activeProvider, id), el.value);
+      });
+    }
+
     const provider = document.getElementById('provider').value;
     const cfg = PROVIDER_CONFIG[provider] || PROVIDER_CONFIG.custom;
     const modelInput = document.getElementById('model');
@@ -74,26 +87,70 @@
       baseUrlGroup.classList.add('hidden');
       baseUrlInput.value = '';
     }
+
+    // Swap the model and API key inputs to the values previously saved for
+    // this provider (different providers have different keys / preferred
+    // models). Falls back to the provider's default model.
+    loadProviderState(provider);
+    _activeProvider = provider;
   }
 
   // ---- localStorage helpers for form persistence ----
   const STORAGE_PREFIX = 'stat_';
-  const PERSISTED_FIELDS = ['dataset-dir', 'session-name', 'api-key', 'model', 'base-url', 'provider'];
+  // Fields that are independent of which provider is chosen.
+  const GENERIC_FIELDS = ['dataset-dir', 'session-name', 'provider'];
+  // Fields that are stored per-provider (so each provider remembers its own).
+  const PROVIDER_FIELDS = ['api-key', 'model'];
 
-  function saveFormToStorage() {
-    PERSISTED_FIELDS.forEach(id => {
+  function providerStorageKey(provider, fieldId) {
+    return `${STORAGE_PREFIX}${provider}__${fieldId}`;
+  }
+
+  function saveProviderState() {
+    const provider = document.getElementById('provider').value || 'openai';
+    PROVIDER_FIELDS.forEach(id => {
       const el = document.getElementById(id);
-      if (el) localStorage.setItem(STORAGE_PREFIX + id, el.value);
+      if (el) localStorage.setItem(providerStorageKey(provider, id), el.value);
     });
   }
 
+  function loadProviderState(provider) {
+    PROVIDER_FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const saved = localStorage.getItem(providerStorageKey(provider, id));
+      // Migrate one-time from the legacy single-slot key for users who saved
+      // a config before per-provider storage existed.
+      const legacy = saved == null ? localStorage.getItem(STORAGE_PREFIX + id) : null;
+      el.value = saved != null ? saved : (legacy || '');
+    });
+  }
+
+  function saveFormToStorage() {
+    GENERIC_FIELDS.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) localStorage.setItem(STORAGE_PREFIX + id, el.value);
+    });
+    // Persist base-url only when Custom is selected (otherwise the field is
+    // hidden and meaningless).
+    const provider = document.getElementById('provider').value;
+    const baseUrlEl = document.getElementById('base-url');
+    if (provider === 'custom' && baseUrlEl) {
+      localStorage.setItem(STORAGE_PREFIX + 'base-url', baseUrlEl.value);
+    }
+    saveProviderState();
+  }
+
   function loadFormFromStorage() {
-    PERSISTED_FIELDS.forEach(id => {
+    GENERIC_FIELDS.forEach(id => {
       const el = document.getElementById(id);
       const saved = localStorage.getItem(STORAGE_PREFIX + id);
       if (el && saved) el.value = saved;
     });
-    // Update hints after restoring provider
+    const baseUrlEl = document.getElementById('base-url');
+    const savedBaseUrl = localStorage.getItem(STORAGE_PREFIX + 'base-url');
+    if (baseUrlEl && savedBaseUrl) baseUrlEl.value = savedBaseUrl;
+    // Update placeholders + base-url visibility + per-provider fields.
     onProviderChange();
   }
 
