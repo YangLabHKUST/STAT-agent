@@ -87,6 +87,7 @@ def initialize_dataset():
     user_api_key = data.get('api_key')
     user_model = data.get('model')
     user_base_url = data.get('base_url')
+    user_provider = data.get('provider')
 
     try:
         # Create session
@@ -116,6 +117,8 @@ def initialize_dataset():
 
                     if user_base_url:
                         agent_kwargs["endpoint"] = user_base_url
+                    if user_provider:
+                        agent_kwargs["provider"] = user_provider
 
                     agent = SpatialAgent(**agent_kwargs)
                     logger.info("Agent initialized successfully")
@@ -2190,7 +2193,8 @@ def test_llm():
         llm_kwargs = {
             'system_prompt': 'You are a helpful AI assistant for testing API connections.',
             'model': model.strip(),
-            'api_key': api_key.strip()
+            'api_key': api_key.strip(),
+            'provider': provider.strip() if provider else None,
         }
 
         # Add base URL if provided

@@ -40,17 +40,18 @@
   };
 
   // ---- Provider configuration ----
+  // Default model IDs as of 2026-05. Every value here has been verified
+  // end-to-end against the live provider API. Users type the bare model ID;
+  // routing is determined by the Provider dropdown, not by a name prefix.
+  // Less common providers (Moonshot, xAI/Grok, Zhipu, Qwen) are intentionally
+  // omitted — they are reachable through Poe.
   const PROVIDER_CONFIG = {
-    openai:     { models: 'gpt-4o, gpt-4o-mini, gpt-4.1, o3-mini', placeholder: 'gpt-4o', envKey: 'OPENAI_API_KEY', baseUrl: 'https://api.openai.com/v1' },
-    anthropic:  { models: 'anthropic/claude-sonnet-4, anthropic/claude-opus-4', placeholder: 'anthropic/claude-sonnet-4-20250514', envKey: 'ANTHROPIC_API_KEY', baseUrl: '' },
-    poe:        { models: 'poe/Claude-Sonnet-4.6, poe/GPT-4o', placeholder: 'poe/Claude-Sonnet-4.6', envKey: 'POE_API_KEY', baseUrl: 'https://api.poe.com/v1' },
-    google:     { models: 'gemini/gemini-2.5-pro, gemini/gemini-2.5-flash', placeholder: 'gemini/gemini-2.5-pro', envKey: 'GOOGLE_API_KEY', baseUrl: '' },
-    deepseek:   { models: 'deepseek/deepseek-chat, deepseek/deepseek-reasoner', placeholder: 'deepseek/deepseek-chat', envKey: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com/v1' },
-    moonshot:   { models: 'moonshot/kimi-k2-0711-preview, moonshot/moonshot-v1-128k', placeholder: 'moonshot/kimi-k2-0711-preview', envKey: 'MOONSHOT_API_KEY', baseUrl: 'https://api.moonshot.cn/v1' },
-    xai:        { models: 'grok/grok-2, grok/grok-beta', placeholder: 'grok/grok-2', envKey: 'XAI_API_KEY', baseUrl: 'https://api.x.ai/v1' },
-    zhipu:      { models: 'zhipu/glm-4.5, zhipu/glm-4-plus', placeholder: 'zhipu/glm-4.5', envKey: 'ZAI_API_KEY', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
-    dashscope:  { models: 'qwen-max, qwen-plus, qwq-plus', placeholder: 'qwen-max', envKey: 'DASHSCOPE_API_KEY', baseUrl: '' },
-    custom:     { models: 'Enter any model ID', placeholder: '', envKey: '', baseUrl: '' },
+    openai:    { models: 'gpt-5.4, gpt-5.5, gpt-4o',                       placeholder: 'gpt-5.4',                  envKey: 'OPENAI_API_KEY',    baseUrl: 'https://api.openai.com/v1' },
+    anthropic: { models: 'claude-opus-4-7, claude-opus-4-6',               placeholder: 'claude-opus-4-7',          envKey: 'ANTHROPIC_API_KEY', baseUrl: '' },
+    google:    { models: 'gemini-3.1-pro-preview, gemini-2.5-pro',         placeholder: 'gemini-3.1-pro-preview',   envKey: 'GOOGLE_API_KEY',    baseUrl: '' },
+    deepseek:  { models: 'deepseek-v4-pro, deepseek-v4-flash',             placeholder: 'deepseek-v4-pro',          envKey: 'DEEPSEEK_API_KEY',  baseUrl: 'https://api.deepseek.com/v1' },
+    poe:       { models: 'claude-sonnet-4.5, claude-opus-4.7, gpt-5.5, gemini-3.1-pro, deepseek-v4-pro-el', placeholder: 'claude-sonnet-4.5', envKey: 'POE_API_KEY', baseUrl: 'https://api.poe.com/v1' },
+    custom:    { models: 'Enter any model ID',                             placeholder: '',                         envKey: '',                  baseUrl: '' },
   };
 
   function onProviderChange() {
@@ -2981,6 +2982,7 @@
       const params = {
         dataset_dir: form.dataset_dir.value,
         session_name: form.session_name.value,
+        provider: form.provider.value || undefined,
         api_key: form.api_key.value || undefined,
         model: form.model.value || undefined,
         base_url: form.base_url.value || undefined,

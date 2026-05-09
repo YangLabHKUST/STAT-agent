@@ -58,6 +58,7 @@ dependencies = [
     # LLM providers
     "anthropic>=0.18",
     "openai>=1.12",
+    "google-generativeai>=0.5",
 
     # Config
     "pyyaml>=6.0",

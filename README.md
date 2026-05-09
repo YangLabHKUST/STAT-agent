@@ -185,17 +185,23 @@ Skills are auto-discovered from `stat_agent/skills/{slug}/SKILL.md`. Each skill 
 
 ## LLM providers
 
-STAT supports multiple providers via a unified `LLMBackend`. Set the provider, model, and API key in the web UI's *Configure LLM* panel, or via environment variables:
+STAT supports five providers via a unified `LLMBackend`. In the web UI's *Configure LLM* panel, pick a **Provider** from the dropdown, then type the bare **Model ID** as it appears at that provider's API — no prefix needed. (Older saved configs that include a prefix like `anthropic/…` still work for backward compatibility.)
 
-| Provider | Env var | Example model |
-| --- | --- | --- |
-| Anthropic | `ANTHROPIC_API_KEY` | `claude-opus-4-7`, `claude-sonnet-4-6` |
-| OpenAI | `OPENAI_API_KEY` | `gpt-4o`, `gpt-4o-mini` |
-| Google | `GOOGLE_API_KEY` | <!-- TODO: fill supported Gemini model id --> |
-| Deepseek | `DEEPSEEK_API_KEY` | <!-- TODO: fill supported model id --> |
-| Poe | `POE_API_KEY` | <!-- TODO: fill supported model id --> |
+For programmatic use, export the corresponding environment variable before launching `stat-web`. Every model ID below has been verified end-to-end against the live provider API.
 
-> **Tip.** For long-context analysis tasks, models with 128k+ context windows are strongly recommended.
+| Provider | Where to get a key | Env var | Default model | Other verified IDs |
+| --- | --- | --- | --- | --- |
+| **OpenAI** | <https://platform.openai.com/api-keys> | `OPENAI_API_KEY` | `gpt-5.4` | `gpt-5.5`, `gpt-4o` |
+| **Anthropic** | <https://console.anthropic.com/settings/keys> | `ANTHROPIC_API_KEY` | `claude-opus-4-7` | `claude-opus-4-6`, `claude-sonnet-4-6` |
+| **Google Gemini** | <https://aistudio.google.com/app/apikey> | `GOOGLE_API_KEY` | `gemini-3.1-pro-preview` | `gemini-2.5-pro` |
+| **DeepSeek** | <https://platform.deepseek.com/api_keys> | `DEEPSEEK_API_KEY` | `deepseek-v4-pro` | `deepseek-v4-flash` |
+| **Poe** (multi-model gateway) | <https://poe.com/api_key> | `POE_API_KEY` | `claude-sonnet-4.5` | `claude-opus-4.7`, `gpt-5.5`, `gemini-3.1-pro`, `deepseek-v4-pro-el` |
+
+> **Poe caveat.** `claude-opus-4.6` and `claude-sonnet-4.6` on Poe force extended-thinking on the bot side and are not yet supported through STAT — use `claude-opus-4.7` instead, or switch to the direct Anthropic provider.
+
+> **Tip.** For long-context analysis (multi-slice integration, large reference profiles), prefer models with 200 k+ context: `claude-opus-4-7`, `claude-opus-4-6`, `gpt-5.5`, `gemini-3.1-pro-preview`.
+
+> **Verify before a long run.** Use the *Test Connection* button in the *Configure LLM* panel — it sends a one-token round-trip through the same `LLMBackend` code path as the agent and reports the exact error if anything is off.
 
 ## Reproducing the paper
 
