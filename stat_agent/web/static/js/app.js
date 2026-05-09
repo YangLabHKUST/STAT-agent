@@ -54,20 +54,10 @@
     custom:    { models: 'Enter any model ID',                                                              placeholder: '' },
   };
 
-  // Track the most recently displayed provider so we can stash the user's
-  // in-progress entries before switching to a different one.
-  let _activeProvider = null;
-
-  function onProviderChange() {
-    // Stash whatever the user has typed for the previous provider so it
-    // isn't lost when they switch — even if they never click Load Dataset.
-    if (_activeProvider) {
-      PROVIDER_FIELDS.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) localStorage.setItem(providerStorageKey(_activeProvider, id), el.value);
-      });
-    }
-
+  // Updates placeholder + base-url visibility for the currently selected
+  // provider. Does NOT touch the model / API key values — used during page
+  // load when we want to keep restored values intact.
+  function updateProviderUI() {
     const provider = document.getElementById('provider').value;
     const cfg = PROVIDER_CONFIG[provider] || PROVIDER_CONFIG.custom;
     const modelInput = document.getElementById('model');
@@ -87,71 +77,37 @@
       baseUrlGroup.classList.add('hidden');
       baseUrlInput.value = '';
     }
+  }
 
-    // Swap the model and API key inputs to the values previously saved for
-    // this provider (different providers have different keys / preferred
-    // models). Falls back to the provider's default model.
-    loadProviderState(provider);
-    _activeProvider = provider;
+  // Fires when the user picks a different provider in the dropdown. Clears
+  // the model + API key inputs so they fall back to the provider's defaults
+  // (different providers expect different IDs and different keys).
+  function onProviderChange() {
+    updateProviderUI();
+    document.getElementById('model').value = '';
+    document.getElementById('api-key').value = '';
   }
 
   // ---- localStorage helpers for form persistence ----
   const STORAGE_PREFIX = 'stat_';
-  // Fields that are independent of which provider is chosen.
-  const GENERIC_FIELDS = ['dataset-dir', 'session-name', 'provider'];
-  // Fields that are stored per-provider (so each provider remembers its own).
-  const PROVIDER_FIELDS = ['api-key', 'model'];
-
-  function providerStorageKey(provider, fieldId) {
-    return `${STORAGE_PREFIX}${provider}__${fieldId}`;
-  }
-
-  function saveProviderState() {
-    const provider = document.getElementById('provider').value || 'openai';
-    PROVIDER_FIELDS.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) localStorage.setItem(providerStorageKey(provider, id), el.value);
-    });
-  }
-
-  function loadProviderState(provider) {
-    PROVIDER_FIELDS.forEach(id => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const saved = localStorage.getItem(providerStorageKey(provider, id));
-      // Migrate one-time from the legacy single-slot key for users who saved
-      // a config before per-provider storage existed.
-      const legacy = saved == null ? localStorage.getItem(STORAGE_PREFIX + id) : null;
-      el.value = saved != null ? saved : (legacy || '');
-    });
-  }
+  const PERSISTED_FIELDS = ['dataset-dir', 'session-name', 'api-key', 'model', 'base-url', 'provider'];
 
   function saveFormToStorage() {
-    GENERIC_FIELDS.forEach(id => {
+    PERSISTED_FIELDS.forEach(id => {
       const el = document.getElementById(id);
       if (el) localStorage.setItem(STORAGE_PREFIX + id, el.value);
     });
-    // Persist base-url only when Custom is selected (otherwise the field is
-    // hidden and meaningless).
-    const provider = document.getElementById('provider').value;
-    const baseUrlEl = document.getElementById('base-url');
-    if (provider === 'custom' && baseUrlEl) {
-      localStorage.setItem(STORAGE_PREFIX + 'base-url', baseUrlEl.value);
-    }
-    saveProviderState();
   }
 
   function loadFormFromStorage() {
-    GENERIC_FIELDS.forEach(id => {
+    PERSISTED_FIELDS.forEach(id => {
       const el = document.getElementById(id);
       const saved = localStorage.getItem(STORAGE_PREFIX + id);
       if (el && saved) el.value = saved;
     });
-    const baseUrlEl = document.getElementById('base-url');
-    const savedBaseUrl = localStorage.getItem(STORAGE_PREFIX + 'base-url');
-    if (baseUrlEl && savedBaseUrl) baseUrlEl.value = savedBaseUrl;
-    // Update placeholders + base-url visibility + per-provider fields.
-    onProviderChange();
+    // Refresh placeholder / base-url visibility WITHOUT clearing the values
+    // we just restored.
+    updateProviderUI();
   }
 
   // ---- Session reconnect on page refresh ----
