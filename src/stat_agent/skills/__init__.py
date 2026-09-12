@@ -7,7 +7,6 @@ from stat_agent.skills.schema import (
     Dependencies,
     FilterRequirements,
     MethodCard,
-    Postcondition,
     SkillFrontmatter,
     parse_skill_text,
 )
@@ -17,7 +16,6 @@ __all__ = [
     "Dependencies",
     "FilterRequirements",
     "MethodCard",
-    "Postcondition",
     "SkillFrontmatter",
     "parse_skill_text",
     "Skill",

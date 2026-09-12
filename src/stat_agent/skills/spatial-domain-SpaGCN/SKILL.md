@@ -16,10 +16,7 @@ default_skill: true
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obs:spatial_domain, obs:spatial_domain_raw]
-postconditions:
-  - {artifact: obs:spatial_domain, check: exists}
-  - {artifact: obs:spatial_domain, check: n_unique_min, params: {n: 2}}
+produces: [obs:spatial_domain]
 platforms: [linux, macos]
 dependencies:
   python: [SpaGCN, torch]

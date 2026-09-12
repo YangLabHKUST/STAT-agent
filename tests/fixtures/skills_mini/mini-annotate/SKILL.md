@@ -11,9 +11,6 @@ prerequisites:
   - "Tissue type information (e.g., breast cancer, brain cortex)"
 produces:
   - obs:celltype
-postconditions:
-  - artifact: obs:celltype
-    check: exists
 default_skill: true
 ---
 

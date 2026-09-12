@@ -87,3 +87,13 @@ def test_stamping_emitter_and_jsonl_sink(tmp_path):
         sink.emit(e)
     rows = sink.read()
     assert [r["type"] for r in rows] == ["phase", "turn_done"] and rows[1]["seq"] == 2
+
+
+def test_parse_segments_strips_every_interpret_marker():
+    from stat_agent.roles.generator import parse_segments
+
+    raw = "Step 1.\n```python\nprint(1)\n```\n\n__INTERPRET__: check the counts\n\nStep 2.\n```python\nprint(2)\n```\n\n__INTERPRET__: describe the pattern\n"
+    gen = parse_segments(raw)
+    assert "__INTERPRET__" not in gen.text and "__INTERPRET__" not in gen.raw.replace(raw, "")
+    assert all("__INTERPRET__" not in s.content for s in gen.segments)
+    assert gen.interpret_instruction == "check the counts; describe the pattern" and len(gen.code_blocks) == 2

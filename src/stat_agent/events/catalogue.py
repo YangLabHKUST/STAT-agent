@@ -398,7 +398,7 @@ class ErrorEvent(EventBase):
 
 class TurnDone(EventBase):
     type: Literal["turn_done"] = "turn_done"
-    state: Literal["done", "blocked"] = "done"
+    state: Literal["done", "blocked", "cancelled"] = "done"
     summary: dict[str, Any] = Field(default_factory=dict)
     usage: dict[str, Any] = Field(default_factory=dict)
     ledger_version: int = 0
@@ -451,13 +451,6 @@ class ValidateResult(EventBase):
     failures: list[str] = Field(default_factory=list)
 
 
-class SkillContractViolation(EventBase):
-    type: Literal["skill_contract_violation"] = "skill_contract_violation"
-    step_id: str | None = None
-    slug: str
-    missing: list[str] = Field(default_factory=list)
-
-
 class DraftOffer(EventBase):
     type: Literal["draft_offer"] = "draft_offer"
     step_id: str | None = None
@@ -466,7 +459,7 @@ class DraftOffer(EventBase):
 
 
 Event = Annotated[
-    Hello | Ping | Resync | LockState | SessionReset | TurnStarted | PhaseEvent | PlanUpdated | StepStarted | StepDone | FilterComplete | MatchComplete | SkillSelected | VerifyComplete | PromptEvent | PromptAnswered | AssumptionEvent | CodeBlockStarted | ExecOutput | CodeBlockDone | FigureEvent | ExecutionIssue | ReflectionEvent | TextEvent | TextDelta | ProvenanceUpdate | UsageEvent | NotebookCellAdded | AdviceEvent | WarningEvent | ErrorEvent | TurnDone | TurnError | TurnCancelled | MethodCardEvent | UnguardedMode | RefusalEvent | ValidateResult | SkillContractViolation | DraftOffer,
+    Hello | Ping | Resync | LockState | SessionReset | TurnStarted | PhaseEvent | PlanUpdated | StepStarted | StepDone | FilterComplete | MatchComplete | SkillSelected | VerifyComplete | PromptEvent | PromptAnswered | AssumptionEvent | CodeBlockStarted | ExecOutput | CodeBlockDone | FigureEvent | ExecutionIssue | ReflectionEvent | TextEvent | TextDelta | ProvenanceUpdate | UsageEvent | NotebookCellAdded | AdviceEvent | WarningEvent | ErrorEvent | TurnDone | TurnError | TurnCancelled | MethodCardEvent | UnguardedMode | RefusalEvent | ValidateResult | DraftOffer,
     Field(discriminator="type"),
 ]
 

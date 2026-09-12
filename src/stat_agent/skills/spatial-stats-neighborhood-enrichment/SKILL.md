@@ -14,9 +14,7 @@ default_skill: true
 schema_version: 2
 version: "2.0"
 consumes: [obs:celltype]
-produces: [uns:*_nhood_enrichment, uns:nhood_enrichment_zscore, obsp:spatial_connectivities]
-postconditions:
-  - {artifact: uns:nhood_enrichment_zscore, check: exists}
+produces: [uns:nhood_enrichment_zscore]
 platforms: [linux, macos, windows]
 dependencies:
   python: [squidpy]

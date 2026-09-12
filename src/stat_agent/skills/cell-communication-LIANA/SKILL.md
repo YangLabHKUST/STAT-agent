@@ -15,8 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: [obs:celltype]
 produces: [uns:liana_res, uns:cell_communication, obsp:spatial_connectivities]
-postconditions:
-  - {artifact: uns:liana_res, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [liana, squidpy, plotnine]

@@ -18,8 +18,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obsm:X_pca_harmony, obsm:X_umap_harmony, obsm:X_umap_pre_harmony, obs:harmony_batch, uns:harmony_params, obs:celltype_knn, obs:celltype_knn_confidence]
-postconditions:
-  - {artifact: obsm:X_pca_harmony, check: rows_match_obs}
 platforms: [linux, macos, windows]
 dependencies:
   python: [harmonypy, scanpy, scikit-learn]

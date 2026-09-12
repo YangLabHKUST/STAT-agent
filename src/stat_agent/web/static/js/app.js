@@ -152,8 +152,9 @@
     api.getGeneList(state.currentSliceId).then(r => { if (r.success) state.geneList = r.genes || []; });
     refreshROIs();
     loadSkillList();
-    openEventStream();
+    // history first (sets stream.lastSeq), then the live stream continues from that seq: nothing renders twice
     await restoreChatHistory();
+    openEventStream();
     setTimeout(preloadAllSlices, 500);
   }
 
@@ -181,7 +182,6 @@
         if (!res.success) continue;
         const live = t.state === 'running' || t.state === 'awaiting_input';
         for (const ev of res.events || []) {
-          if (ev.seq && ev.seq <= stream.lastSeq && !live) { /* already seen live */ }
           handleEvent(ev, !live);
           if (ev.seq) stream.lastSeq = Math.max(stream.lastSeq, ev.seq);
         }
@@ -469,7 +469,7 @@
       const res = await fetch('/api/logs/info');
       const data = await res.json();
       if (data.error) {
-        pathEl.textContent = 'Error: ' + data.error;
+        pathEl.textContent = 'Error: ' + errText(data.error, 'unknown');
         return;
       }
       pathEl.textContent = data.session_dir || 'No session directory';
@@ -520,7 +520,7 @@
       const res = await fetch(`/api/logs/turn/${encodeURIComponent(filename)}`);
       const data = await res.json();
       if (data.error) {
-        detailEl.innerHTML = `<div class="logs-placeholder">${escapeHtml(data.error)}</div>`;
+        detailEl.innerHTML = `<div class="logs-placeholder">${escapeHtml(errText(data.error, 'unknown'))}</div>`;
         return;
       }
       detailEl.innerHTML = '<div class="markdown-body">' + renderMarkdownFull(data.content) + '</div>';
@@ -539,10 +539,10 @@
       const res = await fetch('/api/logs/notebook');
       const data = await res.json();
       if (data.error) {
-        detailEl.innerHTML = `<div class="logs-placeholder">${escapeHtml(data.error)}</div>`;
+        detailEl.innerHTML = `<div class="logs-placeholder">${escapeHtml(errText(data.error, 'unknown'))}</div>`;
         return;
       }
-      detailEl.innerHTML = _renderNotebook(data.notebook);
+      detailEl.innerHTML = _renderNotebook(data.notebook || data);
     } catch (e) {
       detailEl.innerHTML = `<div class="logs-placeholder">Failed: ${escapeHtml(e.message)}</div>`;
     }
@@ -733,6 +733,13 @@
   // Kept for backward compat — delegates to global registry
   function generateColor(name) {
     return getOrAssignColor(name, null);
+  }
+
+  // the v2 error envelope is {code, message}; older call sites expected a string
+  function errText(x, fallback) {
+    if (!x) return fallback || '';
+    if (typeof x === 'string') return x;
+    return x.message || x.code || fallback || 'Error';
   }
 
   function escapeHtml(text) {
@@ -1556,7 +1563,7 @@
         await refreshROIs();
         render();
       } else {
-        alert('Failed to create ROI: ' + (result.error || 'Unknown error'));
+        alert('Failed to create ROI: ' + errText(result.error, 'Unknown error'));
       }
     } catch (err) {
       alert('Error creating ROI: ' + err.message);
@@ -1620,7 +1627,7 @@
     'provenance_update', 'usage', 'notebook_cell_added', 'advice', 'warning',
     'lock_state', 'session_reset', 'error', 'turn_done', 'turn_error', 'turn_cancelled',
     'method_card', 'unguarded_mode', 'refusal', 'validate_result',
-    'skill_contract_violation', 'draft_offer',
+    'draft_offer',
   ];
   const TERMINAL_EVENTS = new Set(['turn_done', 'turn_error', 'turn_cancelled']);
   const PHASE_LABELS = {
@@ -1630,11 +1637,11 @@
     waiting: 'Waiting for you', idle: '',
   };
 
-  const stream = { es: null, lastSeq: 0, connected: false, attempts: 0, watchdog: null, lastFrameAt: 0, generation: null };
+  const stream = { es: null, lastSeq: 0, connected: false, attempts: 0, watchdog: null, lastFrameAt: 0, generation: null, seen: new Set() };
   // Per-turn rendering state (the assistant bubble currently being built).
   const turnUI = {
     turnId: null, body: null, pendingPrompt: null, startedAt: null, timer: null,
-    streamEl: null, execOutputEl: null, planEl: null, statusEl: null, seen: new Set(), lastPhase: 'idle',
+    streamEl: null, streamBuf: '', userScrolledUp: false, execOutputEl: null, planEl: null, statusEl: null, seen: new Set(), lastPhase: 'idle',
   };
 
   function chatEl() { return document.getElementById('chat-messages'); }
@@ -1671,7 +1678,7 @@
       es.addEventListener(t, (e) => {
         stream.lastFrameAt = Date.now();
         const seq = parseInt(e.lastEventId || '0', 10);
-        if (seq && seq <= stream.lastSeq) return;   // duplicate after reconnect
+        if (seq && seq <= stream.lastSeq && stream.seen.has(seq)) return;   // duplicate after reconnect
         if (seq) stream.lastSeq = seq;
         let ev;
         try { ev = JSON.parse(e.data); } catch (err) { console.warn('bad frame', err); return; }
@@ -1719,9 +1726,11 @@
       state.stale = new Set((snap.ledger && snap.ledger.stale) || []);
       updateROIList();
       updateStaleInfo();
-      stream.lastSeq = snap.last_seq || stream.lastSeq;
       chatEl().innerHTML = '';
+      stream.seen = new Set();
+      turnUI.turnId = null; turnUI.body = null; turnUI.streamEl = null; turnUI.planEl = null; turnUI.execOutputEl = null;
       await restoreChatHistory();
+      stream.lastSeq = Math.max(stream.lastSeq, snap.last_seq || 0);
     } catch (e) { console.warn('resync failed', e); }
   }
 
@@ -1792,6 +1801,11 @@
   // ---- the reducer -------------------------------------------------------------
   function handleEvent(ev, replay) {
     const t = ev.type;
+    if (ev.seq) {
+      if (stream.seen.has(ev.seq)) return;
+      stream.seen.add(ev.seq);
+      if (stream.seen.size > 20000) stream.seen = new Set([...stream.seen].slice(-10000));
+    }
     if (ev.turn_id && ev.turn_id !== turnUI.turnId && t !== 'turn_started' && !turnUI.body) {
       // events for a turn we have no bubble for (e.g. reconnect mid-turn): create one
       beginTurnBubble(ev.turn_id, null);
@@ -1851,13 +1865,15 @@
         if (!turnUI.streamEl) {
           turnUI.streamEl = document.createElement('div');
           turnUI.streamEl.className = 'stream-text';
+          turnUI.streamBuf = '';
           appendNode(turnUI.streamEl);
         }
-        turnUI.streamEl.textContent += ev.delta;
+        turnUI.streamBuf += ev.delta;
+        turnUI.streamEl.innerHTML = renderStreamPreview(turnUI.streamBuf);
         break;
       }
       case 'text': {
-        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; }
+        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; turnUI.streamBuf = ''; }
         turnUI.execOutputEl = null;
         if (ev.role === 'analysis') {
           appendToAssistantMsg(`<hr class="chat-hr-light"><div><em><strong>Analysis</strong></em></div><div>${renderMarkdown(ev.text)}</div>`);
@@ -1869,7 +1885,7 @@
         break;
       }
       case 'code_block_started': {
-        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; }
+        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; turnUI.streamBuf = ''; }
         const label = ev.attempt > 1 ? `Code (retry ${ev.attempt - 1})` : 'Code';
         appendToAssistantMsg(`<details class="code-details" data-block="${escapeHtml(ev.block_id)}"><summary>${label}</summary><div class="chat-code-block"><pre>${escapeHtml(ev.code)}</pre></div></details>`);
         turnUI.execOutputEl = null;
@@ -1933,10 +1949,7 @@
         appendPipelineLog(`Method card: ${(ev.card && ev.card.method_name) || 'unregistered method'}`);
         break;
       case 'validate_result':
-        if (!ev.passed) appendPipelineLog('Postcondition check failed: ' + ev.failures.join('; '));
-        break;
-      case 'skill_contract_violation':
-        appendPipelineLog(`Skill ${ev.slug} did not produce: ${ev.missing.join(', ')}`);
+        if (!ev.passed) appendPipelineLog('Step outputs still missing: ' + ev.failures.join('; '));
         break;
       case 'provenance_update':
         applyProvenanceUpdate(ev, replay);
@@ -1953,7 +1966,8 @@
       case 'turn_cancelled':
         if (t === 'turn_error') appendToAssistantMsg(`<div class="alert-card error"><strong>Turn failed</strong>: ${escapeHtml(ev.message || '')}</div>`);
         if (t === 'turn_cancelled') appendToAssistantMsg('<div class="small-info">Stopped.</div>');
-        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; }
+        if (t === 'turn_done' && ev.state === 'blocked') appendToAssistantMsg('<div class="small-info">Turn ended early: a step could not run (see the note above).</div>');
+        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; turnUI.streamBuf = ''; }
         finishTurn(ev, replay);
         break;
       case 'session_reset':
@@ -1974,6 +1988,8 @@
     turnUI.body = createAssistantMessage();
     turnUI.pendingPrompt = null;
     turnUI.streamEl = null;
+    turnUI.streamBuf = '';
+    turnUI.userScrolledUp = false;
     turnUI.execOutputEl = null;
     turnUI.planEl = null;
     turnUI.usage = null;
@@ -2147,7 +2163,7 @@
     msgDiv.className = 'chat-msg user';
     msgDiv.innerHTML = `<div class="chat-msg-body">${escapeHtml(text)}</div>`;
     chatEl().appendChild(msgDiv);
-    scrollChatToBottom();
+    scrollChatToBottom(true);
   }
 
   function appendSystemNotice(text, cls) {
@@ -2155,7 +2171,7 @@
     div.className = 'chat-msg system';
     div.innerHTML = `<div class="chat-msg-body ${cls === 'error' ? 'alert-card error' : 'small-info'}">${escapeHtml(text)}</div>`;
     chatEl().appendChild(div);
-    scrollChatToBottom();
+    scrollChatToBottom(true);
   }
 
   function createAssistantMessage() {
@@ -2235,9 +2251,34 @@
     return html;
   }
 
-  function scrollChatToBottom() {
+  // Streamed generator text: show prose as it arrives, but never dump raw code into the bubble;
+  // an open fence becomes a "Writing code" chip until the block is executed (code_block_started).
+  function renderStreamPreview(buf) {
+    const parts = String(buf).replace(/^__INTERPRET__:.*$/gm, '').split('```');
+    let html = '';
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) {
+        if (parts[i]) html += escapeHtml(parts[i]);
+      } else {
+        const closed = i < parts.length - 1;
+        const lines = Math.max(parts[i].split('\n').length - 1, 1);
+        html += `<span class="stream-code-chip">${closed ? 'Code block' : 'Writing code'} · ${lines} line${lines === 1 ? '' : 's'}${closed ? '' : '…'}</span>`;
+      }
+    }
+    return html;
+  }
+
+  // Auto-scroll follows new content unless the reader has scrolled up; sending a message forces it.
+  function scrollChatToBottom(force) {
     const el = chatEl();
-    el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (!turnUI._scrollBound) {
+      turnUI._scrollBound = true;
+      el.addEventListener('scroll', () => {
+        turnUI.userScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 80;
+      }, { passive: true });
+    }
+    if (force || !turnUI.userScrolledUp) el.scrollTop = el.scrollHeight;
   }
 
   function updateChatButtons() {
@@ -2279,7 +2320,7 @@
 
       // Process image
       console.time('decode-image');
-      if (imgRes.success && imgRes.image_data) {
+      if (imgRes.success && (imgRes.image_data || imgRes.is_scatter)) {
         c.imageWidth = imgRes.image_width;
         c.imageHeight = imgRes.image_height;
         c.isScatter = imgRes.is_scatter || false;
@@ -2335,7 +2376,15 @@
       }
       console.timeEnd('process-cells');
 
-      c.loaded = true;
+      // a 409 (the agent holds the session) is an envelope, not an exception: retry later instead of blanking the slice
+      const busy = [imgRes, cellRes].find(r => r && !r.success && r.error && (r.error.code === 'locked' || r.error.code === 'busy'));
+      if (busy) {
+        c.loading = false;
+        if (isCurrentSlice) showSpinner('Session busy (a step is running); retrying…');
+        setTimeout(() => loadSliceData(sliceId, modality), 5000);
+        return;
+      }
+      c.loaded = !!(imgRes.success && cellRes.success);
     } catch (err) {
       console.error('Error loading slice data:', err);
     }
@@ -2742,7 +2791,7 @@
             await refreshROIs();
             render();
           } else {
-            alert(res.error || 'Rename failed');
+            alert(errText(res.error, 'Rename failed'));
           }
         }
       });
@@ -2757,7 +2806,7 @@
             await refreshROIs();
             render();
           } else {
-            alert(res.error || 'Delete failed');
+            alert(errText(res.error, 'Delete failed'));
           }
         }
       });
@@ -2926,56 +2975,10 @@
         if (res.success) {
           // Persist form values for next time
           saveFormToStorage();
-
-          state.sessionSummary = res.summary;
-          const _first = firstSliceOf(res.summary);
-          state.currentSliceId = _first ? _first.slice_id : null;
-          state.currentModality = _first ? _first.modality : 'gene';
-          state.mode = res.mode || 'interactive';
-          stream.generation = res.generation;
-          state.stale = new Set();
-          state.initialized = true;
-
-          // Hide overlay, show app
-          document.getElementById('init-overlay').classList.add('hidden');
-          document.getElementById('app').classList.remove('hidden');
-
-          // Enable chat if agent is active
-          document.getElementById('send-btn').disabled = !res.agent_active;
-          document.getElementById('chat-input').placeholder = res.agent_active
-            ? 'Ask about your data...'
-            : 'Agent not available (no API key)';
-
-          // Setup UI
-          updateSessionInfo();
-          updateSliceTabs();
-          updateModalityToggle();
-          updateVizModeState();
-
-          // Trigger canvas resize + load data
-          setupResizeObserver();
-          await loadSliceData(state.currentSliceId, state.currentModality);
-
-          // Update controls that depend on loaded data
-          updateCelltypeCheckboxes();
-          updateDataInfo();
-          updateVizModeState();
-
-          // Load gene list
-          api.getGeneList(state.currentSliceId).then(res => {
-            if (res.success) state.geneList = res.genes || [];
-          });
-
-          // Load ROIs
-          refreshROIs();
-
-          // Load skill list
-          loadSkillList();
-
-          // Preload other slices
-          setTimeout(preloadAllSlices, 500);
+          // one entry path for a fresh dataset and for a reconnect: enterApp opens the event stream and restores history
+          await enterApp(res);
         } else {
-          errorEl.textContent = res.error || res.message || 'Failed to load dataset';
+          errorEl.textContent = errText(res.error, res.message || 'Failed to load dataset');
           errorEl.classList.remove('hidden');
         }
       } catch (err) {
@@ -3286,7 +3289,7 @@
         if (res.success) {
           window.open(`http://localhost:${res.jupyter_port}`, '_blank');
         } else {
-          alert(res.error || 'Notebook not available');
+          alert(errText(res.error, 'Notebook not available'));
         }
       } catch (e) {
         alert('Notebook not available');

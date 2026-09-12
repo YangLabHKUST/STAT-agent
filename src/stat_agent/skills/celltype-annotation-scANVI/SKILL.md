@@ -15,8 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obs:celltype]
-postconditions:
-  - {artifact: obs:celltype, check: exists}
 platforms: [linux, macos]
 dependencies:
   python: [scvi-tools, torch]

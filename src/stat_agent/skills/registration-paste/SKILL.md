@@ -17,8 +17,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obsm:spatial_registered, uns:registration_params]
-postconditions:
-  - {artifact: obsm:spatial_registered, check: rows_match_obs}
 platforms: [linux, macos]
 dependencies:
   python: [paste-bio, pot, torch]

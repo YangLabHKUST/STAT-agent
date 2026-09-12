@@ -36,7 +36,7 @@ analyse, with planner, verifier and skill-selection clarifications), the impleme
 - **Provenance ledger.** Every artefact (`obs` column, `obsm` matrix, ROI, figure) records what
   produced it and what it read. Deleting an ROI or correcting an annotation marks the dependants
   stale; the interface shows them and can re-run them downstream.
-- **Out-of-registry requests.** A method without a skill gets a provisional method card that passes
+- **Out-of-registry requests.** A named method without a skill gets a provisional method card that passes
   the same filter and verifier. Unmet requirements are refused by name before any code runs;
   successful runs can be drafted into a new skill.
 - **Auto mode.** Every clarification can be answered by policy (skill defaults, known facts, session
@@ -47,7 +47,7 @@ analyse, with planner, verifier and skill-selection clarifications), the impleme
   capture; the canvas and the session are two views of one live object.
 - **Robust web layer.** Starlette + uvicorn with a single ordered, resumable event stream
   (`Last-Event-ID`), a turn API with typed replies, cooperative cancel and durable sessions.
-- **Skills v2.** Frontmatter declares `consumes`, `produces`, `postconditions`, `platforms`,
+- **Skills v2.** Frontmatter declares `consumes`, `produces`, `platforms`,
   `dependencies` and `defaults`; a linter checks them against the code. All 26 skills are annotated.
 - **`stat-bench`.** Ablation arms, auto versus interactive, repeated seeds, SessionBench scripts,
   frontmatter corruption and silent-error detectors, all as command-line switches.

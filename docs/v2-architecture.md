@@ -92,7 +92,7 @@ pending prompt.
 
 ### Out-of-registry requests
 
-When the matcher returns nothing, the method-card synthesizer produces a provisional skill contract
+When the matcher returns nothing and the step names a method (the planner's `kind: skill`; custom workflows are `general` and skip all of this), the method-card synthesizer produces a provisional skill contract
 for the requested method. The card goes through the same filter and verifier: an incompatible card
 or an unobtainable prerequisite becomes a `refusal` event that names the requirement (for example
 spliced and unspliced layers for RNA velocity) before any code is generated. A card that passes

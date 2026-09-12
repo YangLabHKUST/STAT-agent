@@ -50,10 +50,13 @@ class TurnCreate(_Body):
 
 class ReplyDecision(_Body):
     prompt_id: str
-    kind: Literal["answer", "option", "prerequisites", "assumption_override"] = "answer"
+    kind: Literal["answer", "option", "prerequisites", "assumption_override"] | None = None
     text: str | None = None
     index: int | None = None
     answers: dict[str, str] | None = None
+    # documented aliases of the viewer's fields
+    answer: str | None = None
+    option_index: int | None = None
     decision: dict[str, Any] | None = None
 
 

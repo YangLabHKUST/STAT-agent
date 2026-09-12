@@ -34,7 +34,6 @@ class Analysis(BaseModel):
     key_findings: list[str] = Field(default_factory=list)
     execution_issues: ExecutionIssues = Field(default_factory=ExecutionIssues)
     analyzer_failed: bool = False
-    omitted_changes: list[str] = Field(default_factory=list)
 
 
 class BlockResult(BaseModel):
@@ -80,40 +79,48 @@ class AnalyzerRole(Role):
         memory: ConversationMemory | None,
         interpret_instruction: str = "",
         produced: list[str] = (),
+        incomplete: list[str] = (),
         turn_id: str | None = None,
         step: int | None = None,
     ) -> Analysis:
+        context = assemble_context(segments, results)
+        if incomplete:
+            context += "\n**Note:** the code ran without errors, but the step's declared outputs were not produced: " + "; ".join(incomplete) + "\n"
         variables = {
             "session_info": analyzer_session_info(summary, roi_names) if summary else "",
             "history_block": history_block(memory, "plain"),
             "user_query": user_query,
-            "assembled_context": assemble_context(segments, results),
+            "assembled_context": context,
             "has_interpret": bool(interpret_instruction),
             "interpret_instruction": interpret_instruction,
         }
         fake_input = {"query": user_query, "code": [s.content for s in segments if s.kind == "code"], "outputs": [r.stdout[-500:] for r in results], "errors": [r.error for r in results]}
         comp = await self.call(variables, schema=Analysis, fake_input=fake_input, turn_id=turn_id, step=step)
         a: Analysis = comp.value
-        return self.ground(a, results, list(produced))
+        return self.ground(a, results, list(produced), list(incomplete))
 
     @staticmethod
-    def ground(a: Analysis, results: list[BlockResult], produced: list[str]) -> Analysis:
+    def ground(a: Analysis, results: list[BlockResult], produced: list[str], incomplete: list[str] = ()) -> Analysis:
         if any(not r.success for r in results):
             if not a.execution_issues.has_issues:
                 a.execution_issues = ExecutionIssues(has_issues=True, issue_type="error", explanation=a.execution_issues.explanation or "A code block raised an error.")
-        text = (a.data_changes or "") + " " + (a.response_summary or "")
-        a.omitted_changes = [p for p in produced if p.split(":")[-1] not in text]
+        if incomplete:
+            note = "The step's declared outputs were not produced: " + "; ".join(incomplete) + "."
+            a.execution_issues = ExecutionIssues(has_issues=True, issue_type="partial_success", explanation=(note + " " + (a.execution_issues.explanation or "")).strip())
         return a
 
     @staticmethod
-    def deterministic(results: list[BlockResult], produced: list[str], stdout_tail: str) -> Analysis:
+    def deterministic(results: list[BlockResult], produced: list[str], stdout_tail: str, incomplete: list[str] = ()) -> Analysis:
         """Ablation / failure fallback: build the handoff from the ledger delta and stdout."""
         ok = all(r.success for r in results)
         changes = ", ".join(produced) if produced else "no session artefacts changed"
+        issues = ExecutionIssues(has_issues=not ok, issue_type=None if ok else "error", explanation=None if ok else next((r.error for r in results if r.error), None))
+        if ok and incomplete:
+            issues = ExecutionIssues(has_issues=True, issue_type="partial_success", explanation="The step's declared outputs were not produced: " + "; ".join(incomplete) + ".")
         return Analysis(
             response_summary=(stdout_tail[:300].strip() or ("Code executed successfully." if ok else "Code execution failed.")),
             data_changes=f"Artefacts changed: {changes}.",
-            execution_issues=ExecutionIssues(has_issues=not ok, issue_type=None if ok else "error", explanation=None if ok else next((r.error for r in results if r.error), None)),
+            execution_issues=issues,
             analyzer_failed=True,
         )
 

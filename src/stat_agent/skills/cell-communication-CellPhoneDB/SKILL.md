@@ -17,8 +17,6 @@ schema_version: 2
 version: "2.0"
 consumes: [obs:celltype]
 produces: [uns:cellphonedb_means, uns:cellphonedb_pvalues, uns:cellphonedb_significant, uns:cellphonedb_deconvoluted, uns:cell_communication]
-postconditions:
-  - {artifact: uns:cell_communication, check: exists}
 platforms: [linux, macos]
 dependencies:
   python: [cellphonedb, statsmodels]

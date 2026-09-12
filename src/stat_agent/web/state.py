@@ -121,9 +121,7 @@ class AppState:
                 pass
             mode = mode or self.settings.mode
             if saved is not None and (Path(session_dir_to_load) / "memory.json").exists():
-                agent = Agent.load(session, llm, session_dir_to_load, registry=self.registry, settings=self.settings, notebook=notebook, stream_text=True)
-                agent.session_dir = self.session_dir
-                agent.llm.calllog.set_session_dir(self.session_dir)
+                agent = Agent.load(session, llm, session_dir_to_load, logs_dir=self.session_dir, registry=self.registry, settings=self.settings, notebook=notebook, stream_text=True)
                 agent.mode = mode
                 agent.policy = make_policy(mode)
             else:

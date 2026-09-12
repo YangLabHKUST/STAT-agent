@@ -5,11 +5,19 @@ from __future__ import annotations
 from langgraph.runtime import Runtime as LGRuntime
 from langgraph.types import Command
 
-from stat_agent.agent.nodes.common import answer_records, cancelled, emit_prompt, obtain_decision, phase
+from stat_agent.agent.nodes.common import (
+    answer_records,
+    cancel_turn,
+    cancelled,
+    emit_prompt,
+    obtain_decision,
+    phase,
+)
 from stat_agent.agent.policy import Interrupt
 from stat_agent.agent.state import Context, TurnState, answers_for, memory_of, pending_interrupt
 from stat_agent.core.view import InterfaceState
-from stat_agent.events.catalogue import PlanStepView, PlanUpdated, StepStarted, TurnCancelled
+from stat_agent.events.catalogue import PlanStepView, PlanUpdated, StepStarted, TextEvent
+from stat_agent.memory.state import StepHandoff
 
 
 def _plan_views(plan: list[dict], step_index: int, statuses: dict[int, str] | None = None) -> list[PlanStepView]:
@@ -36,7 +44,13 @@ async def plan_node(state: TurnState, runtime: LGRuntime[Context]):
             answers=answers_for(state, "planner"),
             interface=interface,
             turn_id=state["turn_id"],
+            catalog=ctx.registry.catalog(),
         )
+    if result.direct_answer:
+        answer = result.direct_answer
+        ctx.emit(TextEvent(segment_id=f"{state['turn_id']}-answer", text=answer, role="answer"))
+        handoff = StepHandoff(step_number=1, description=query, mode="text", success=True, summary=answer[:300], response=answer)
+        return Command(update={"plan": [], "step_index": 0, "pending": None, "handoffs": [handoff.model_dump()]}, goto="finish_turn")
     if result.needs_clarification:
         pending = Interrupt(kind="planner", question=result.question)
         emit_prompt(ctx, pending, None)
@@ -60,8 +74,7 @@ async def ask_planner_node(state: TurnState, runtime: LGRuntime[Context]):
 async def select_step_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
     if cancelled(ctx):
-        ctx.emit(TurnCancelled(partial=bool(state.get("handoffs")), ledger_version=ctx.ledger.version))
-        return Command(update={"status": "cancelled"}, goto="finish_turn")
+        return cancel_turn(ctx, state)
     plan = state.get("plan") or []
     idx = state.get("step_index", 0)
     if idx >= len(plan):
@@ -87,7 +100,7 @@ async def select_step_node(state: TurnState, runtime: LGRuntime[Context]):
         "text": "",
     }
     ctx.emit(StepStarted(step_id=step_id, index=step_no, total=len(plan), description=step.get("description", ""), target_slices=current["target_slice_ids"]))
-    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_started", steps=_plan_views(plan, idx)))
+    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_started", steps=_plan_views(plan, idx, {int(k): v for k, v in (state.get("step_statuses") or {}).items()})))
     if blocked_by:
         current.update(status="skipped", mode="skipped", skip_reason=f"depends on failed step(s) {blocked_by}")
         return Command(update={"current": current}, goto="finish_step")

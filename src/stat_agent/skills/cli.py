@@ -121,9 +121,6 @@ prerequisites:
 consumes: []
 produces:
   - obs:example_label
-postconditions:
-  - artifact: obs:example_label
-    check: exists
 dependencies:
   python: []
   gpu: false

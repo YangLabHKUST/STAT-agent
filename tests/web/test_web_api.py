@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 from tests.web.conftest import init_session, sse_frames
@@ -150,3 +151,86 @@ def test_skill_draft_endpoint(client, dataset_dir, tmp_path, monkeypatch):
     wait_state(client, r.json()["turn_id"], {"done", "error"})
     bad = client.post("/api/skills/draft", json={"turn_id": "t9999", "step": 1})
     assert bad.status_code == 400
+
+
+def test_skills_list_has_titles_for_the_panel(client, dataset_dir):
+    init_session(client, dataset_dir)
+    skills = client.get("/api/skills/list").json()["skills"]
+    assert skills and all(s.get("title") and s.get("slug") and "enabled" in s for s in skills)
+
+
+def test_imageless_slice_returns_extent_without_a_jpeg():
+    from tests.fixtures.sessions import make_session
+
+    from stat_agent.web.render import image_payload
+
+    s = make_session("S1_cell_gene").get_slice(0)
+    s.images.clear()
+    payload = image_payload(s)
+    assert payload["is_scatter"] is True and payload["image_data"] == ""
+    assert payload["image_width"] >= 1 and payload["image_height"] >= 1
+
+
+def test_roi_list_reports_busy_while_the_agent_holds_the_session(client, dataset_dir):
+    init_session(client, dataset_dir)
+    stat = client.app.state.stat
+    assert stat.session.lock.acquire(timeout=1, holder="turn:test")
+    try:
+        r = client.get("/api/roi/list")
+        assert r.status_code == 409 and "busy" in r.text
+    finally:
+        stat.session.lock.release()
+
+
+def test_reply_accepts_documented_shapes(client, dataset_dir):
+    """{prompt_id, answers} without a kind, {prompt_id, option_index}, and an empty reply is a 400."""
+    init_session(client, dataset_dir)
+    turn_id = client.post("/api/turns", json={"message": "annotate cell types"}).json()["turn_id"]
+    snap = wait_state(client, turn_id, {"awaiting_input"})
+    pid = snap["pending_prompt_id"]
+    empty = client.post(f"/api/turns/{turn_id}/reply", json={"prompt_id": pid})
+    assert empty.status_code == 400
+    ok = client.post(f"/api/turns/{turn_id}/reply", json={"prompt_id": pid, "answers": {"q1": "brain"}})
+    assert ok.status_code == 202
+    assert wait_state(client, turn_id, {"done", "error"})["state"] == "done"
+    frames = client.get(f"/api/turns/{turn_id}/events").json()["events"]
+    answered = [f for f in frames if f["type"] == "prompt_answered"]
+    assert answered and "brain" in json.dumps(answered[0]["decision"])
+
+
+def test_snapshot_consistency_and_save_report_busy(client, dataset_dir):
+    init_session(client, dataset_dir)
+    stat = client.app.state.stat
+    assert stat.session.lock.acquire(timeout=1, holder="turn:test")
+    try:
+        for method, path in (("GET", "/api/session/snapshot"), ("GET", "/api/debug/consistency"), ("POST", "/api/session/save")):
+            r = client.request(method, path, json={} if method == "POST" else None)
+            assert r.status_code == 409 and r.json()["error"]["code"] == "locked", (path, r.status_code, r.text[:120])
+    finally:
+        stat.session.lock.release()
+
+
+def test_events_resync_when_the_client_is_ahead_of_the_log(client, dataset_dir):
+    init_session(client, dataset_dir)
+    frames = sse_frames(client.get("/api/events", params={"since": "999999", "once": "1"}).text)
+    kinds = [f["event"] for f in frames]
+    assert "resync" in kinds and [f for f in frames if f["event"] == "resync"][0]["data"]["reason"] == "ahead_of_log"
+
+
+def test_reply_body_aliases_map_to_decisions():
+    """The documented aliases (answer, option_index, answers without kind) map like the viewer's fields; an empty reply is refused."""
+    import pytest
+
+    from stat_agent.web.errors import ApiError
+    from stat_agent.web.turns import Turn, TurnManager
+
+    turn = Turn(turn_id="t1", generation=1, message="m", mode="interactive", driver="staged")
+    turn.pending_prompt = {"prompt_id": "p", "kind": "skill_selection", "questions": [], "options": [{"index": 1, "slug": "a"}, {"index": 2, "slug": "b"}]}
+    assert TurnManager._to_decision(turn, {"prompt_id": "p", "option_index": 2}).option_index == 2
+    assert TurnManager._to_decision(turn, {"prompt_id": "p", "answer": "2"}).option_index == 2
+    turn.pending_prompt = {"prompt_id": "p", "kind": "verifier", "questions": [{"id": "q1", "text": "Which tissue?"}], "options": []}
+    d = TurnManager._to_decision(turn, {"prompt_id": "p", "answers": {"q1": "brain"}})
+    assert d.kind == "verifier" and d.answers == {"Which tissue?": "brain"}
+    assert TurnManager._to_decision(turn, {"prompt_id": "p", "answer": "brain"}).answer == "brain"
+    with pytest.raises(ApiError):
+        TurnManager._to_decision(turn, {"prompt_id": "p"})

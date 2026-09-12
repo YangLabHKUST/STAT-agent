@@ -15,8 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [uns:rank_genes_groups, uns:de_results]
-postconditions:
-  - {artifact: uns:de_results, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [scanpy]

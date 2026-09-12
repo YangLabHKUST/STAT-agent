@@ -363,15 +363,19 @@ class Agent:
         (self.session_dir / "agent_state.json").write_text(_json.dumps(state, indent=1), encoding="utf-8")
 
     @classmethod
-    def load(cls, session: Any, llm: LLMClient | str, session_dir: str | Path, **kwargs: Any) -> Agent:
-        """Rebuild an agent from ``session_dir`` (memory, ledger, pending prompt, durable checkpoints)."""
+    def load(cls, session: Any, llm: LLMClient | str, session_dir: str | Path, *, logs_dir: str | Path | None = None, **kwargs: Any) -> Agent:
+        """Rebuild an agent from ``session_dir`` (memory, ledger, pending prompt, durable checkpoints).
+
+        ``logs_dir`` is where the rebuilt agent writes from now on (call logs, events, figures,
+        checkpoints); it defaults to ``session_dir``. A saved session is loaded with a fresh
+        ``logs_dir`` so the saved directory stays untouched."""
         import json as _json
 
         session_dir = Path(session_dir)
         state = _json.loads((session_dir / "agent_state.json").read_text(encoding="utf-8")) if (session_dir / "agent_state.json").exists() else {}
         kwargs.setdefault("session_id", state.get("session_id"))
         kwargs.setdefault("mode", state.get("mode", "interactive"))
-        agent = cls(session, llm, session_dir=session_dir, **kwargs)
+        agent = cls(session, llm, session_dir=Path(logs_dir) if logs_dir else session_dir, **kwargs)
         if (session_dir / "memory.json").exists():
             agent.memory = ConversationMemory.model_validate_json((session_dir / "memory.json").read_text(encoding="utf-8"))
         if (session_dir / "ledger.json").exists():

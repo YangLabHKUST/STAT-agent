@@ -37,6 +37,7 @@ class TurnState(TypedDict, total=False):
     memory: dict
     plan: list[dict]
     step_index: int
+    step_statuses: dict  # {step index: done|failed|skipped}, kept across steps for the plan view
     answers: Annotated[list[dict], operator.add]
     handoffs: Annotated[list[dict], operator.add]
     assumptions: Annotated[list[dict], operator.add]

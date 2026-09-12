@@ -57,16 +57,21 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
         response=response,
     )
     ctx.emit(StepDone(step_id=current.get("step_id", f"s{idx + 1}"), index=idx + 1, status="done" if handoff.success else ("skipped" if status == "skipped" else ("blocked" if status == "blocked" else "failed")), mode=handoff.mode, figures=list(current.get("figures", [])), summary=handoff.summary))
-    statuses = {i: ("done" if (i < idx) else "pending") for i in range(len(plan))}
+    statuses = {int(k): v for k, v in (state.get("step_statuses") or {}).items()}
     statuses[idx] = "done" if handoff.success else ("skipped" if status == "skipped" else "failed")
-    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_done", steps=[PlanStepView(step_id=f"s{i + 1}", index=i + 1, description=s.get("description", ""), status=statuses[i], target_slices=list(s.get("target_slice_ids", [])), skill=s.get("skill")) for i, s in enumerate(plan)]))
-    figures = list(state.get("figures", [])) + list(current.get("figures", []))
     next_idx = idx + 1
-    # stop the turn when a later step depends on this failed step
+    # stop the turn when a later step depends on this failed step; the rest is skipped
     later_dependants = [s for s in plan[next_idx:] if handoff.step_number in s.get("depends_on", [])]
-    if not handoff.success and later_dependants:
-        return Command(update={"handoffs": [handoff.model_dump()], "figures": figures, "step_index": next_idx, "status": "blocked"}, goto="finish_turn")
-    return Command(update={"handoffs": [handoff.model_dump()], "figures": figures, "step_index": next_idx}, goto="select_step")
+    stop = (not handoff.success) and bool(later_dependants)
+    if stop:
+        for j in range(next_idx, len(plan)):
+            statuses[j] = "skipped"
+    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_done", steps=[PlanStepView(step_id=f"s{i + 1}", index=i + 1, description=s.get("description", ""), status=statuses.get(i) or ("pending" if i >= next_idx else "done"), target_slices=list(s.get("target_slice_ids", [])), skill=s.get("skill")) for i, s in enumerate(plan)]))
+    figures = list(state.get("figures", [])) + list(current.get("figures", []))
+    update = {"handoffs": [handoff.model_dump()], "figures": figures, "step_index": next_idx, "step_statuses": {str(k): v for k, v in statuses.items()}}
+    if stop:
+        return Command(update={**update, "status": "blocked"}, goto="finish_turn")
+    return Command(update=update, goto="select_step")
 
 
 async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
@@ -102,7 +107,7 @@ async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
                 pass
     phase(ctx, "idle")
     usage = ctx.llm.meter.turn_totals(state["turn_id"]).as_dict()
-    ctx.emit(TurnDone(state="done" if status == "done" else "blocked", response=response, figures=list(state.get("figures", [])), usage=usage, ledger_version=ctx.ledger.version, summary={"steps": len(handoffs), "status": status}))
+    ctx.emit(TurnDone(state="done" if status == "done" else ("cancelled" if status == "cancelled" else "blocked"), response=response, figures=list(state.get("figures", [])), usage=usage, ledger_version=ctx.ledger.version, summary={"steps": len(handoffs), "status": status}))
     return {"memory": memory.model_dump(), "status": status, "response": response}
 
 

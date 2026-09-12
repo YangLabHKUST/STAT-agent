@@ -78,6 +78,7 @@ class SkillRegistry:
         self.skills: Dict[str, Skill] = {}
         self.broken: List[BrokenSkill] = []
         self.disabled: set[str] = set()
+        self._seen: set[str] = set()  # slugs whose initial enabled state was applied once
         self._loaded = False
 
     # ---- construction ----------------------------------------------------------------------
@@ -114,6 +115,12 @@ class SkillRegistry:
                 if skill.slug in self.skills:
                     logger.info("skill %s from %s overrides %s", skill.slug, label, self.skills[skill.slug].origin)
                 self.skills[skill.slug] = skill
+        # default_skill: false = off until the user enables it (0.1 semantics); a reload keeps the user's toggles
+        for slug, sk in self.skills.items():
+            if slug not in self._seen:
+                self._seen.add(slug)
+                if not sk.meta.default_skill:
+                    self.disabled.add(slug)
         self._loaded = True
         logger.info("loaded %d skills (%d broken) from %d path(s)", len(self.skills), len(self.broken), len(self.search_paths))
         return self
@@ -136,7 +143,7 @@ class SkillRegistry:
 
     def is_enabled(self, slug: str) -> bool:
         skill = self.skills.get(slug)
-        return skill is not None and skill.meta.default_skill and slug not in self.disabled
+        return skill is not None and slug not in self.disabled
 
     def enabled(self) -> Dict[str, Skill]:
         return {s: sk for s, sk in self.skills.items() if self.is_enabled(s)}
@@ -162,6 +169,7 @@ class SkillRegistry:
         return {
             s: {
                 "name": sk.name,
+                "title": sk.name,  # the skills panel reads `title`
                 "description": sk.description,
                 "enabled": self.is_enabled(s),
                 "default_skill": sk.meta.default_skill,

@@ -14,8 +14,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [uns:enrichment_genes_groups, uns:enrichment_results_groups, uns:enrichment_params]
-postconditions:
-  - {artifact: uns:enrichment_results_groups, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [gseapy]

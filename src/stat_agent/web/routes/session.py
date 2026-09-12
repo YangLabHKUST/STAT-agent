@@ -8,10 +8,12 @@ from starlette.requests import Request
 from starlette.routing import Route
 
 from stat_agent import __version__
+from stat_agent.core.lock import SessionBusy
 from stat_agent.events.catalogue import PROTOCOL_VERSION
 from stat_agent.events.encoding import dumps
 from stat_agent.web.errors import ApiError
 from stat_agent.web.routes.common import json, parse_body, state_of
+from stat_agent.web.routes.data import _busy
 from stat_agent.web.schemas import SessionCreate
 
 
@@ -51,8 +53,18 @@ async def snapshot(request: Request):
     app = state_of(request)
     session = app.require_session()
     agent = app.require_agent()
-    with session.lock.hold("gui:snapshot", timeout=app.config.lock_timeout_s):
-        from stat_agent.web.render import roi_payload
+    try:
+        with session.lock.hold("gui:snapshot", timeout=app.config.lock_timeout_s):
+            payload = _snapshot_payload(app, session, agent)
+    except SessionBusy as exc:
+        raise _busy(exc) from exc
+    return json(payload)
+
+
+def _snapshot_payload(app, session, agent) -> dict:
+    from stat_agent.web.render import roi_payload
+
+    if True:
 
         payload = {
             "success": True,
@@ -65,13 +77,21 @@ async def snapshot(request: Request):
             "mode": agent.mode,
             "assumptions": [a.model_dump() for t in agent.memory.turns for a in t.assumptions],
         }
-    return json(payload)
+    return payload
 
 
 async def consistency(request: Request):
     app = state_of(request)
     session = app.require_session()
     agent = app.require_agent()
+    try:
+        digest = _consistency_digest(app, session, agent)
+    except SessionBusy as exc:
+        raise _busy(exc) from exc
+    return json({"success": True, "ledger_version": agent.ledger.version, "hash": digest, "ledger_hash": agent.ledger.consistency_hash(), "n_artifacts": len(agent.ledger.live())})
+
+
+def _consistency_digest(app, session, agent) -> str:
     with session.lock.hold("gui:consistency", timeout=app.config.lock_timeout_s):
         parts = []
         for sid in session.slice_ids:
@@ -80,7 +100,7 @@ async def consistency(request: Request):
         rois = [{"name": r.name, "slice_id": r.slice_id, "n_obs": r.n_obs, "bounds": list(r.bounds)} for r in session.roi_manager.rois.values()]
         canonical = dumps({"slices": parts, "rois": rois, "stale": agent.ledger.stale_ids()}, sort_keys=True)
         digest = hashlib.sha256(canonical.encode()).hexdigest()
-    return json({"success": True, "ledger_version": agent.ledger.version, "hash": digest, "ledger_hash": agent.ledger.consistency_hash(), "n_artifacts": len(agent.ledger.live())})
+    return digest
 
 
 async def save_session(request: Request):
@@ -94,7 +114,11 @@ async def save_session(request: Request):
     except Exception:  # noqa: BLE001
         pass
     target = body.get("dir") if isinstance(body, dict) else None
-    out = _save(app.session, agent, target)
+    try:
+        with app.session.lock.hold("gui:save", timeout=app.config.lock_timeout_s):
+            out = _save(app.session, agent, target)
+    except SessionBusy as exc:
+        raise _busy(exc) from exc
     return json({"success": True, "dir": str(out)})
 
 

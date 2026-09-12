@@ -263,6 +263,10 @@ class ProvenanceLedger:
                 a.status, a.version, a.updated_at = "deleted", a.version + 1, now
         reason_src = producer.label or (producer.skill or f"turn {producer.turn_id}") if producer else origin
         stale_now = self._propagate(set(diff.changed) | set(diff.removed), f"input changed by {reason_src}", exclude=touched)
+        if not (diff.added or diff.changed or diff.removed or stale_now or stale_cleared):
+            # nothing happened: no log entry, no version bump (a cancelled or read-only run)
+            entry = LedgerEntry(seq=self.version, ts=now, origin=origin, producer=producer)
+            return LedgerDelta(entry=entry, ledger_version=self.version, summary=summarize_v1([], [], []))
         self.version += 1
         entry = LedgerEntry(seq=self.version, ts=now, origin=origin, producer=producer, added=list(diff.added), changed=list(diff.changed), removed=list(diff.removed), stale_now=stale_now, stale_cleared=stale_cleared)
         self.log.append(entry)

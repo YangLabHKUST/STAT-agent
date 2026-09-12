@@ -34,7 +34,6 @@ def test_v2_fields_and_artifact_refs():
             "description": "d" * 50,
             "consumes": ["obs:celltype"],
             "produces": [{"kind": "obs", "key": "niche_label"}, "uns:niche_*"],
-            "postconditions": [{"artifact": "obs:niche_label", "check": "n_unique_min", "params": {"n": 2}}],
             "dependencies": {"python": ["scanpy"], "gpu": False, "vendored": ["niche_analysis_lib"]},
             "platforms": "Xenium, MERFISH",
             "custom_key": 1,
@@ -104,3 +103,62 @@ def test_parse_skill_text_and_method_card():
         {"method_name": "scVelo RNA velocity", "description": "v" * 50, "prerequisites": ["spliced and unspliced layers"], "filter_requirements": {"data_levels": ["cell"]}, "confidence": 0.8}
     )
     assert card.provisional is True and card.slug == "scvelo-rna-velocity"
+
+
+def test_method_card_normalises_single_slice_alternatives():
+    from stat_agent.skills.schema import MethodCard
+
+    card = MethodCard.model_validate({"method_name": "X", "description": "d" * 30, "filter_requirements": {"num_slices": 1, "modalities": ["gene"], "data_levels": ["Cell", "spot"]}, "prerequisites": [], "consumes": [], "produces": [], "outline": [], "risks": [], "confidence": 0.5})
+    assert card.filter_requirements.data_levels == ["cell/spot"] and card.filter_requirements.modalities == ["gene"]
+
+
+def test_verifier_prepass_is_advisory_for_provisional_cards():
+    from tests.fixtures.sessions import make_session
+
+    from stat_agent.core.view import SessionSummary
+    from stat_agent.roles.planner import PlanStep
+    from stat_agent.roles.verifier import VerifierRole
+    from stat_agent.skills.schema import MethodCard, SkillFrontmatter
+
+    summary = SessionSummary.from_session(make_session("S1_cell_gene"))
+    step = PlanStep(step_number=1, description="x", target_slice_ids=[0], refined_query="compute something")
+    base = {"description": "d" * 30, "filter_requirements": {}, "prerequisites": ["p"], "produces": []}
+    registered = SkillFrontmatter.model_validate({"name": "reg", "slug": "reg", **base, "consumes": ["obs:missing_key"]})
+    assert VerifierRole.contract_pass(registered, step, summary, []).kind == "decline"
+    card = MethodCard.model_validate({"method_name": "M", **base, "consumes": ["obs:missing_key"], "outline": [], "risks": [], "confidence": 0.5})
+    assert VerifierRole.contract_pass(card, step, summary, []) is None
+    card_counts = MethodCard.model_validate({"method_name": "M", **base, "consumes": ["layers:counts"], "outline": [], "risks": [], "confidence": 0.5})
+    assert VerifierRole.contract_pass(card_counts, step, summary, []) is None  # raw counts live in X; not a hard decline
+    assert "annotation" not in VerifierRole.contract_pass(registered, step, summary, []).advice
+    card_layers = MethodCard.model_validate({"method_name": "M", **base, "consumes": ["layers:spliced", "layers:unspliced"], "outline": [], "risks": [], "confidence": 0.5})
+    verdict = VerifierRole.contract_pass(card_layers, step, summary, [])
+    assert verdict.kind == "decline" and verdict.missing == ["layers:spliced", "layers:unspliced"]
+    assert "'spliced'" in verdict.advice and "'unspliced'" in verdict.advice and "annotation" not in verdict.advice
+
+
+def test_non_default_skill_can_be_enabled_and_stays_enabled_across_reloads(tmp_path):
+    from stat_agent.skills import SkillRegistry
+
+    d = tmp_path / "skills" / "x-off"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: x-off\ndescription: " + "z" * 50 + "\nfilter_requirements:\n  data_levels: [cell/spot]\nprerequisites:\n  - a\ndefault_skill: false\n---\n\n# X\n\n```python\nprint(1)\n```\n")
+    reg = SkillRegistry([(tmp_path / "skills", "t")]).load()
+    assert "x-off" in reg and not reg.is_enabled("x-off")
+    reg.enable("x-off")
+    assert reg.is_enabled("x-off")
+    reg.load()
+    assert reg.is_enabled("x-off") and reg.states()["x-off"]["enabled"]
+
+
+def test_ledger_ignores_a_no_change_run():
+    from tests.fixtures.sessions import make_session
+
+    from stat_agent.ledger.provenance import ProvenanceLedger, StepRef
+    from stat_agent.runtime.snapshot import take_snapshot
+
+    session = make_session("S1_cell_gene")
+    ledger = ProvenanceLedger()
+    ledger.initialize(take_snapshot(session))
+    version, entries = ledger.version, len(ledger.log)
+    delta = ledger.record_step(take_snapshot(session), take_snapshot(session), producer=StepRef(turn_id="t1", step=1))
+    assert delta.empty and ledger.version == version and len(ledger.log) == entries

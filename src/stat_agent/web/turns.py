@@ -25,6 +25,7 @@ class Turn:
     driver: str = "staged"
     client_turn_id: str | None = None
     state: str = "queued"
+    terminal: str | None = None  # terminal event seen; applied to `state` only after the agent finished
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
     pending_prompt: dict | None = None
@@ -111,6 +112,7 @@ class TurnManager:
             raise ApiError("prompt_mismatch", "decision is for a different prompt", 409, {"pending_prompt_id": turn.pending_prompt.get("prompt_id")})
         dec = self._to_decision(turn, decision)
         turn.state = "running"
+        turn.terminal = None
         turn.pending_prompt = None
         turn.task = asyncio.create_task(self._run(turn, agent.resume(dec)))
         await asyncio.sleep(0)
@@ -134,7 +136,16 @@ class TurnManager:
     # ---- internals ---------------------------------------------------------------------------------------
     @staticmethod
     def _to_decision(turn: Turn, d: dict) -> Decision:
-        kind = d.get("kind", "answer")
+        # the documented body ({prompt_id, answer | option_index | answers}) and the viewer's body
+        # ({prompt_id, kind, text | index | answers}) are both accepted; an empty reply is rejected
+        d = dict(d)
+        if d.get("option_index") is not None and d.get("index") is None:
+            d["index"] = d["option_index"]
+        if d.get("answer") is not None and d.get("text") is None:
+            d["text"] = d["answer"]
+        kind = d.get("kind") or ("option" if d.get("index") is not None else ("prerequisites" if isinstance(d.get("answers"), dict) else "answer"))
+        if kind == "answer" and not (d.get("text") or "").strip():
+            raise ApiError("validation", "the reply carries no answer (use answer, option_index or answers)", 400)
         pending_kind = (turn.pending_prompt or {}).get("kind")
         if kind == "assumption_override":
             d = d.get("decision") or {}
@@ -169,9 +180,13 @@ class TurnManager:
             logger.exception("turn %s crashed", turn.turn_id)
             self._on_event(turn, TurnError(code=type(exc).__name__, message=str(exc)[:2000], turn_id=turn.turn_id))
         finally:
-            if agent.is_waiting and turn.state == "running":
+            if turn.terminal and turn.state != "cancelled":
+                turn.state = turn.terminal
+                turn.finished_at = turn.finished_at or time.time()
+            elif agent.is_waiting and turn.state == "running":
                 turn.state = "awaiting_input"
                 turn.pending_prompt = self._pending_payload(agent)
+            turn.terminal = None
             if turn.state in TERMINAL_STATES:
                 self._archive(turn)
             try:
@@ -191,17 +206,18 @@ class TurnManager:
         turn.first_seq = turn.first_seq or seq
         turn.last_seq = seq
         t = ev.type  # type: ignore[attr-defined]
+        # states are applied in _run() after the agent has absorbed the result: a client that sees
+        # "done" may save the session, and one that sees "awaiting_input" may reply, immediately
         if t == "prompt":
-            turn.state = "awaiting_input"
             turn.pending_prompt = {"prompt_id": ev.prompt_id, "kind": ev.kind, "question": ev.question, "questions": [q.model_dump() for q in ev.questions], "options": [o.model_dump() for o in ev.options], "skill": ev.skill}
         elif t == "prompt_answered":
-            turn.state = "running"
             turn.pending_prompt = None
         elif t == "figure":
             turn.figures.append(ev.figure_id)
         elif t in TERMINAL_TYPES:
-            turn.state = {"turn_done": "done", "turn_error": "error", "turn_cancelled": "cancelled"}[t]
-            turn.finished_at = time.time()
+            turn.terminal = {"turn_done": "done", "turn_error": "error", "turn_cancelled": "cancelled"}[t]
+            if t == "turn_done" and getattr(ev, "state", None) == "cancelled":
+                turn.terminal = "cancelled"
             turn.cancelling = False
             if t == "turn_done":
                 turn.response = ev.response or ""

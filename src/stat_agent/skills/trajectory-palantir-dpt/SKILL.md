@@ -16,9 +16,7 @@ default_skill: false
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obs:pseudotime, obs:palantir_entropy, obsm:palantir_fate_probs, uns:iroot, uns:trajectory_params]
-postconditions:
-  - {artifact: obs:pseudotime, check: exists}
+produces: [obs:pseudotime, obs:palantir_entropy, obsm:palantir_fate_probs, uns:trajectory_params]
 platforms: [linux, macos, windows]
 dependencies:
   python: [palantir, scanpy]

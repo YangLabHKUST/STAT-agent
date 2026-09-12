@@ -33,8 +33,9 @@ async def _stream(request: Request, turn_id: str | None):
     try:
         log.bind_loop(asyncio.get_running_loop())
         yield _hello(app, app.turns.active_snapshot() if app.turns else None)
-        if log.evicted(since):
-            yield ServerSentEvent(data=dumps({"v": 2, "type": "resync", "reason": "buffer_evicted", "last_seq": log.seq}), event="resync")
+        if log.evicted(since) or since > log.seq:
+            # evicted from the ring buffer, or a client that reconnects with an id from a previous server life
+            yield ServerSentEvent(data=dumps({"v": 2, "type": "resync", "reason": "buffer_evicted" if since <= log.seq else "ahead_of_log", "last_seq": log.seq}), event="resync")
             since = 0
         for seq, etype, frame in log.replay(since, turn_id):
             yield ServerSentEvent(data=frame, event=etype, id=str(seq))
@@ -87,8 +88,7 @@ async def create_turn(request: Request):
     app.require_session()
     body = await parse_body(request, TurnCreate)
     turn = await app.turns.start(body.message, mode=body.mode, driver=body.driver, client_turn_id=body.client_turn_id, interface=body.interface_state, action=body.action.model_dump() if body.action else None)
-    status = 200 if body.client_turn_id and turn.client_turn_id == body.client_turn_id and turn.state != "queued" and turn.started_at < turn.started_at + 1 else 202
-    return json({"success": True, "turn_id": turn.turn_id, "first_seq": turn.first_seq, "state": turn.state}, status=status if status == 202 else 202)
+    return json({"success": True, "turn_id": turn.turn_id, "first_seq": turn.first_seq, "state": turn.state}, status=202)
 
 
 async def list_turns(request: Request):

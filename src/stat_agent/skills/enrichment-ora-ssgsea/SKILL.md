@@ -16,8 +16,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [uns:ora_results]
-postconditions:
-  - {artifact: uns:ora_results, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [gseapy]

@@ -17,9 +17,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obs:celltype, obsm:deconv_weights, obsm:tangram_ct_pred, uns:annotation_params]
-postconditions:
-  - {artifact: obs:celltype, check: exists}
-  - {artifact: obsm:deconv_weights, check: rows_match_obs, severity: warn}
 platforms: [linux, macos]
 dependencies:
   python: [tangram-sc, torch]

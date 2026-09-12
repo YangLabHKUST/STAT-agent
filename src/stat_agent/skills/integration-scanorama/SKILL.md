@@ -15,9 +15,7 @@ default_skill: false
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obsm:X_scanorama, obs:leiden_integrated, uns:integration_scanorama]
-postconditions:
-  - {artifact: obsm:X_scanorama, check: rows_match_obs}
+produces: [obs:leiden_integrated, uns:integration_scanorama]
 platforms: [linux, macos]
 dependencies:
   python: [scanorama, scanpy, leidenalg]

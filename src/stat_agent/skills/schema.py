@@ -2,7 +2,7 @@
 
 v1 keys (STAT 0.1): name, title, slug, description, filter_requirements{num_slices,
 modalities, data_levels}, prerequisites, default_skill. v2 adds optional, additive keys:
-schema_version, version, consumes, produces, postconditions, platforms, dependencies,
+schema_version, version, consumes, produces, platforms, dependencies,
 defaults, budget. Unknown keys are preserved (``extra='allow'``) and reported by the linter.
 """
 
@@ -67,15 +67,6 @@ class ArtifactRef(BaseModel):
 
     def __str__(self) -> str:
         return self.id
-
-
-class Postcondition(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    artifact: ArtifactRef
-    check: Literal["exists", "non_null_fraction", "n_unique_min", "rows_match_obs", "rows_sum_to_one", "in_range"] = "exists"
-    params: Dict[str, float] = Field(default_factory=dict)
-    severity: Literal["error", "warn"] = "error"
 
 
 class Dependencies(BaseModel):
@@ -179,7 +170,6 @@ class SkillFrontmatter(BaseModel):
     version: str = "1.0"
     consumes: List[ArtifactRef] = Field(default_factory=list)
     produces: List[ArtifactRef] = Field(default_factory=list)
-    postconditions: List[Postcondition] = Field(default_factory=list)
     platforms: List[str] = Field(default_factory=list)
     dependencies: Dependencies = Field(default_factory=Dependencies)
     defaults: Dict[str, str] = Field(default_factory=dict)
@@ -239,6 +229,7 @@ class MethodCard(SkillFrontmatter):
     outline: List[str] = Field(default_factory=list)
     risks: List[str] = Field(default_factory=list)
     confidence: float = 0.0
+    named_method: bool = True  # false: a generic workflow; the step runs as general analysis without the card
     provisional: Literal[True] = True
     research_notes: Optional[str] = None
 
@@ -249,6 +240,21 @@ class MethodCard(SkillFrontmatter):
             data = dict(data)
             data.setdefault("name", slugify(data.get("method_name", "method")) or "method")
             data.setdefault("title", data.get("method_name"))
+            fr = data.get("filter_requirements")
+            if isinstance(fr, dict):
+                fr = dict(fr)
+                n = fr.get("num_slices")
+                for field_name in ("modalities", "data_levels"):
+                    v = fr.get(field_name)
+                    if isinstance(v, str):
+                        v = [v]
+                    if isinstance(v, list):
+                        toks = [str(x).strip().lower() for x in v if str(x).strip()]
+                        if n in (None, 1) and len(toks) > 1:
+                            # a single-slice card that lists alternatives means "either": cell/spot
+                            toks = ["/".join(dict.fromkeys(t for tok in toks for t in tok.split("/")))]
+                        fr[field_name] = toks
+                data["filter_requirements"] = fr
         return data
 
 
@@ -279,7 +285,6 @@ def parse_skill_text(text: str) -> Tuple[SkillFrontmatter, str, Dict[str, Any]]:
 __all__ = [
     "ARTIFACT_KINDS",
     "ArtifactRef",
-    "Postcondition",
     "Dependencies",
     "FilterRequirements",
     "SkillFrontmatter",

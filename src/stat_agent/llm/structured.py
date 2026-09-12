@@ -102,7 +102,7 @@ def schema_instruction(schema: type[BaseModel]) -> str:
 
 
 def repair_instruction(schema: type[BaseModel], raw: str, error: StructuredOutputError) -> str:
-    detail = json.dumps(error.errors[:5]) if error.errors else str(error)
+    detail = json.dumps(error.errors[:5], default=str) if error.errors else str(error)
     return (
         "Your previous reply could not be parsed as valid JSON for the required schema.\n"
         f"Validation errors: {detail}\n\nPrevious reply:\n{raw[:4000]}\n\n"

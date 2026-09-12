@@ -39,11 +39,13 @@ class Verdict(BaseModel):
     complete_query: str | None = None
     advice: str | None = None
     decided_by: Literal["contract", "llm", "bypass"] = "llm"
-    contract_conflict: bool = False
     raw: str = ""
 
 
 ANNOTATE_WORDS = ("annotat", "label", "assign", "classif", "deconvol")
+# count layers that only an upstream quantifier can create; any other absent input of a provisional
+# card is left to the LLM verifier (raw counts usually live in adata.X, not in a layer)
+QUANTIFICATION_LAYERS = {"spliced", "unspliced", "ambiguous"}
 
 
 class VerifierRole(Role):
@@ -58,6 +60,11 @@ class VerifierRole(Role):
         targets = [summary.slice(sid) for sid in step.target_slice_ids]
         targets = [t for t in targets if t is not None]
         q = (step.refined_query or "").lower()
+        # a synthesised (provisional) contract guesses its input keys: only data-level inputs that no
+        # analysis can produce (count layers) are hard requirements; other absent keys go to the LLM verifier
+        provisional = bool(getattr(contract, "provisional", False))
+        sids = [t.slice_id for t in targets]
+        missing_layers: list[str] = []
         for art in contract.consumes:
             if art.kind not in ("obs", "obsm", "uns", "var", "layers"):
                 continue
@@ -66,17 +73,34 @@ class VerifierRole(Role):
                 return Verdict(
                     kind="decline",
                     missing=[art.id],
-                    advice=f"{art.id} on slice(s) {[t.slice_id for t in targets]} is stale: an upstream annotation or ROI changed after it was computed. Re-run the step that produced it (or use 'Re-run downstream') before running this analysis.",
+                    advice=f"{art.id} on slice(s) {sids} is stale: an upstream annotation or ROI changed after it was computed. Re-run the step that produced it (or use 'Re-run downstream') before running this analysis.",
                     decided_by="contract",
                 )
             present = [t for t in targets if t.has_key(art.kind, art.key)]
+            if provisional and (art.kind != "layers" or art.key.lower() not in QUANTIFICATION_LAYERS):
+                continue
             if targets and not present and not any(w in q for w in ANNOTATE_WORDS):
+                if art.kind == "layers":
+                    missing_layers.append(art.key)
+                    continue
+                producer = "cell type annotation" if art.key == "celltype" else "the step that produces it"
                 return Verdict(
                     kind="decline",
                     missing=[art.id],
-                    advice=f"This analysis requires {art.id}, which does not exist on slice(s) {[t.slice_id for t in targets]}. Run the step that produces it first (e.g. cell type annotation), then retry.",
+                    advice=f"This analysis requires {art.id}, which does not exist on slice(s) {sids}. Run {producer} first, then retry.",
                     decided_by="contract",
                 )
+        if missing_layers:
+            keys = ", ".join(f"'{k}'" for k in missing_layers)
+            return Verdict(
+                kind="decline",
+                missing=[f"layers:{k}" for k in missing_layers],
+                advice=(
+                    f"This analysis needs the count layer(s) {keys} in adata.layers on slice(s) {sids}, and the loaded data has none. "
+                    "Such layers come from upstream quantification (they cannot be computed by an analysis step here), so load data that includes them before retrying."
+                ),
+                decided_by="contract",
+            )
         return None
 
     async def verify(
@@ -110,14 +134,8 @@ class VerifierRole(Role):
         fake_input = {"skill": contract.slug, "query": step.refined_query, "targets": [{"slice_id": s.slice_id, "has_celltype": s.has_celltype, "obs": sorted(s.obs_columns)[:40]} for s in (summary.slice(i) for i in step.target_slice_ids) if s], "answers": list(answers)}
         comp = await self.call(variables, schema=VerifierOutput, fake_input=fake_input, turn_id=turn_id, step=step_index)
         out: VerifierOutput = comp.value
-        conflict = False
         if out.prerequisites_met:
-            # contract-level sanity: an LLM "met" while a declared consumes key is absent everywhere
-            targets = [summary.slice(sid) for sid in step.target_slice_ids]
-            for art in contract.consumes:
-                if art.kind in ("obs", "obsm", "uns") and targets and not any(t and t.has_key(art.kind, art.key) for t in targets):
-                    conflict = True
-            return Verdict(kind="met", complete_query=out.complete_query or step.refined_query, decided_by="llm", contract_conflict=conflict, raw=comp.text)
+            return Verdict(kind="met", complete_query=out.complete_query or step.refined_query, decided_by="llm", raw=comp.text)
         if out.can_obtain_by_chat:
             questions = [q for q in out.clarification_questions if q and q.strip()] or ["Please provide the information needed for this analysis."]
             return Verdict(kind="ask", questions=questions, missing=out.missing_prerequisites, decided_by="llm", raw=comp.text)

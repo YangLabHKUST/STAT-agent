@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from tests.graph.conftest import collect, make_agent
 
@@ -139,3 +140,194 @@ def test_events_are_stamped_and_written_to_jsonl(registry, tmp_path):
     assert seqs == sorted(seqs) and all(e.turn_id == "t0001" for e in events)
     assert (tmp_path / "s" / "events.jsonl").exists() and (tmp_path / "s" / "turn_001.md").exists()
     assert list((tmp_path / "s" / "calls").glob("*.json"))
+
+
+def test_direct_answer_turn_has_no_pipeline(registry):
+    agent = make_agent(registry)
+    events = asyncio.run(collect(agent.run_turn("What can you do for me?")))
+    types_ = [e.type for e in events]
+    assert types_[0] == "turn_started" and types_[-1] == "turn_done" and "match_complete" not in types_ and "prompt" not in types_
+    assert [e for e in events if e.type == "text"][0].text.startswith("I can annotate")
+    assert events[-1].state == "done" and "annotate cell types" in events[-1].response
+    assert agent.memory.turns[0].handoffs[0].mode == "text" and agent.llm.meter.total.llm_calls == 1
+
+
+def test_general_step_runs_without_method_card(registry):
+    agent = make_agent(registry)
+    events = asyncio.run(collect(agent.run_turn("describe the data")))
+    types_ = [e.type for e in events]
+    assert "method_card" not in types_ and "refusal" not in types_
+    assert "unguarded_mode" in types_ and "code_block_done" in types_ and events[-1].state == "done"
+    assert [e for e in events if e.type == "verify_complete"][0].decided_by == "bypass"
+    assert [e for e in events if e.type == "step_done"][0].mode == "unguarded"
+
+
+def test_skill_step_must_produce_its_declared_outputs(registry):
+    """A skill step that only inspects (celltype already exists from the load) gets one continuation;
+    when that only inspects too, the step is reported as partial and the old artefact is not claimed."""
+    from tests.graph.conftest import default_responder
+
+    def responder(role, messages, schema):
+        if role == "generator":  # the verifier rewrites the query, so key on the role: every generation only inspects
+            return "Just looking.\n```python\nprint(session.get_slice(0).adata.obs['celltype'].value_counts())\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    vr = [e for e in events if e.type == "validate_result"]
+    assert len(vr) == 2 and not vr[-1].passed and "not produced" in vr[-1].failures[0]
+    assert not [e for e in events if e.type == "reflection"]
+    issues = [e for e in events if e.type == "execution_issue"]
+    assert issues and issues[-1].issue_type == "partial_success"
+    assert events[-1].type == "turn_done" and events[-1].state == "blocked"
+    art = agent.ledger.get("s0:obs:celltype")
+    assert art is not None and (art.produced_by is None or art.produced_by.turn_id != "t0001")
+
+
+def test_cancel_between_stages_stops_before_the_next_model_call(registry):
+    from tests.graph.conftest import default_responder, make_agent
+
+    calls: list[str] = []
+    box: dict = {}
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "matcher":
+            box["agent"].cancel()  # the user presses stop while the matcher call is in flight
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, mode="auto", responder=responder)
+    box["agent"] = agent
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    assert "matcher" in calls and "verifier" not in calls and "generator" not in calls
+    assert any(e.type == "turn_cancelled" for e in events)
+    assert events[-1].type == "turn_done" and events[-1].state == "cancelled"
+    assert agent.memory.turns[-1].status == "cancelled"
+
+
+def test_cancel_during_code_interrupts_it_and_skips_analysis(registry):
+    from tests.graph.conftest import default_responder, make_agent
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "generator":
+            return "Working.\n```python\nimport time\nstat_test_stop()\nfor _ in range(600):\n    time.sleep(0.05)\nprint('never')\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, mode="auto", responder=responder)
+    agent.runtime.namespace["stat_test_stop"] = agent.cancel  # the code itself presses stop, then keeps running
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    done = [e for e in events if e.type == "code_block_done"]
+    assert done and done[0].success is False and done[0].error.type == "Cancelled"
+    assert "analyzer" not in calls and "reflector" not in calls
+    assert events[-1].type == "turn_done" and events[-1].state == "cancelled"
+
+
+def test_incomplete_step_gets_one_continuation_on_the_live_namespace(registry):
+    """The first generation only inspects; the continuation reuses its variables and produces the output."""
+    from tests.graph.conftest import _prompt, default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            calls.append(role)
+            if "Continuation of this step" in _prompt(messages):
+                return "Continuing.\n```python\ns.adata.obs['celltype'] = 'B cell'\nprint('annotated')\n```"
+            return "Just looking.\n```python\ns = session.get_slice(0)\nprint(s.adata.obs['celltype'].value_counts())\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    assert [e.passed for e in events if e.type == "validate_result"] == [False, True] and calls == ["generator", "generator"]
+    assert not [e for e in events if e.type == "reflection"]
+    assert events[-1].type == "turn_done" and events[-1].state == "done"
+    assert agent.ledger.get("s0:obs:celltype").produced_by.turn_id == "t0001"
+
+
+def test_card_that_names_no_method_runs_as_general_analysis(registry):
+    """A generic workflow gets no contract: the card reports named_method false and the step runs the 0.1 way."""
+    from tests.graph.conftest import default_responder
+
+    def responder(role, messages, schema):
+        if role == "matcher":
+            return "[]"
+        if role == "method_card":
+            return json.dumps({"method_name": "custom pooled clustering", "description": "d" * 30, "filter_requirements": {"modalities": ["gene"], "data_levels": ["cell"]}, "prerequisites": [], "consumes": [{"kind": "layers", "key": "counts"}], "produces": [], "outline": [], "risks": [], "confidence": 0.8, "named_method": False})
+        if role == "generator":
+            return "Clustering.\n```python\ns = session.get_slice(0)\ns.adata.obs['my_cluster'] = 'c1'\nprint('done')\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("pool the cells and run my custom clustering")))
+    assert not [e for e in events if e.type == "refusal"]
+    um = [e for e in events if e.type == "unguarded_mode"]
+    assert um and "general analysis" in um[0].reason
+    assert events[-1].type == "turn_done" and events[-1].state == "done"
+    assert "my_cluster" in agent.session.get_slice(0).adata.obs.columns
+
+
+def test_step_that_writes_other_artefacts_is_noted_not_continued(registry):
+    """Declared outputs missing but the step did write something: no continuation, no failure, one log line."""
+    from tests.graph.conftest import default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            calls.append(role)
+            return "Working.\n```python\ns = session.get_slice(0)\ns.adata.obs['other_label'] = 'x'\nprint('wrote something else')\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    vr = [e for e in events if e.type == "validate_result"]
+    assert len(vr) == 1 and not vr[0].passed and calls == ["generator"]
+    assert [e for e in events if e.type == "step_done"][0].status == "done"
+    assert events[-1].type == "turn_done" and events[-1].state == "done"
+
+
+def test_continuation_gives_the_analyser_both_blocks(registry):
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: dict = {}
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            if "Continuation of this step" in _prompt(messages):
+                return "Continuing.\n```python\ns.adata.obs['celltype'] = 'B cell'\nprint('annotated')\n```"
+            return "Just looking.\n```python\ns = session.get_slice(0)\nprint(s.adata.obs['celltype'].value_counts())\n```"
+        if role == "analyzer":
+            seen["prompt"] = _prompt(messages)
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    assert events[-1].state == "done"
+    assert seen["prompt"].count("**Code:**") == 2 and seen["prompt"].count("**Output:**") == 2
+    assert seen["prompt"].index("Just looking") < seen["prompt"].index("value_counts") < seen["prompt"].index("annotated")
+
+
+def test_failed_step_stays_failed_in_the_plan_view(registry):
+    """Independent steps: step 1 fails for good, step 2 still runs, and no later plan view repaints step 1 as done."""
+    from tests.graph.conftest import default_responder
+
+    def responder(role, messages, schema):
+        if role == "planner":
+            return json.dumps({"needs_clarification": False, "steps": [
+                {"step_number": 1, "description": "crash please", "kind": "skill", "target_slice_ids": [0], "refined_query": "crash please"},
+                {"step_number": 2, "description": "detect niches", "kind": "skill", "target_slice_ids": [0], "refined_query": "detect niches"}]})
+        if role == "reflector":
+            return json.dumps({"error_type": "KeyError", "root_cause": "boom", "fix_strategy": "none", "change_magnitude": "large", "fixed_code": None, "confidence": 0.9, "should_retry": False})
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("crash please and detect niches")))
+    views = [e for e in events if e.type == "plan_updated"]
+    first_failure = next(i for i, e in enumerate(views) if any(s.index == 1 and s.status == "failed" for s in e.steps))
+    for e in views[first_failure:]:
+        assert [s.status for s in e.steps if s.index == 1] == ["failed"], [(s.index, s.status) for s in e.steps]
+    assert [s.status for s in views[-1].steps] == ["failed", "done"]
+    assert [e for e in events if e.type == "step_done"][-1].status == "done"

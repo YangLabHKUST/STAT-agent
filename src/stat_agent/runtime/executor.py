@@ -78,6 +78,13 @@ class _ThreadRoutedStream(io.TextIOBase):
                 for ln in lines[:-1]:
                     on_line(self._name, ln)
             buf[0] = tail
+            # a progress bar (tqdm) never emits a newline: forward its latest state at most every 2 s
+            now = time.monotonic()
+            if len(buf) < 2:
+                buf.append(now)  # first progress line after 2 s, not immediately
+            elif tail.strip() and now - buf[1] > 2.0:
+                buf[1] = now
+                on_line(self._name, tail.strip())
         else:
             buf[0] += text
         if "\n" in buf[0]:
@@ -178,6 +185,7 @@ class Runtime:
         self.orphaned: bool = False
         self._current: threading.Thread | None = None
         self._cancel = threading.Event()
+        self._cancel_requested = False  # set by cancel(); distinguishes a user stop from a timeout
         self.history: list[RunResult] = []
         ensure_headless_backend()
 
@@ -193,6 +201,7 @@ class Runtime:
         return self.orphaned or (self._current is not None and self._current.is_alive())
 
     def cancel(self) -> None:
+        self._cancel_requested = True
         self._cancel.set()
         t = self._current
         if t is not None and t.is_alive():
@@ -248,6 +257,7 @@ class Runtime:
         from stat_agent.skills.loader import import_paths, scoped_sys_path
 
         self._cancel.clear()
+        self._cancel_requested = False
         if self.snapshot_enabled:
             result.snapshot_before = take_snapshot(self.session)
         ns = dict(self.namespace)
@@ -281,14 +291,18 @@ class Runtime:
                     box["figures"] = capture_figures()
             except KeyboardInterrupt:
                 box["ok"] = False
-                box["error_type"] = "Timeout" if self._cancel.is_set() and not box.get("cancelled") else "Cancelled"
-                box["error"] = "execution interrupted (timeout or cancel)"
+                box["error_type"] = "Cancelled" if self._cancel_requested else "Timeout"
+                box["error"] = "execution stopped by the user" if self._cancel_requested else "execution interrupted (timeout)"
                 box["traceback"] = traceback.format_exc()
                 close_all_figures()
             except BaseException as exc:  # noqa: BLE001
                 box["ok"] = False
-                box["error_type"] = type(exc).__name__
-                box["error"] = f"{type(exc).__name__}: {exc}"
+                if self._cancel_requested:
+                    # some libraries catch KeyboardInterrupt and raise something else (lightning: ValueError)
+                    box["error_type"], box["error"] = "Cancelled", "execution stopped by the user"
+                else:
+                    box["error_type"] = type(exc).__name__
+                    box["error"] = f"{type(exc).__name__}: {exc}"
                 box["traceback"] = _trim_traceback(traceback.format_exc(), result.run_id)
                 close_all_figures()
             finally:

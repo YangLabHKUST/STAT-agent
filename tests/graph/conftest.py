@@ -28,6 +28,9 @@ def default_responder(role: str, messages, schema):
         q = m.group(1) if m else ""
         n_slices = int(re.search(r"Total slices: (\d+)", text).group(1))
         answered = "Previous Clarifications" in text
+        if "what can you do" in q.lower():
+            return json.dumps({"needs_clarification": False, "direct_answer": "I can annotate cell types, detect niches and describe the data.", "steps": []})
+        kind = "general" if any(w in q.lower() for w in ("describe", "how many", "summar")) else "skill"
         if n_slices > 1 and "slice" not in q.lower() and not answered:
             return json.dumps({"needs_clarification": True, "clarification_question": "Which slice would you like to analyze?"})
         target = [1] if (answered and "slice 1" in text.split("Previous Clarifications")[-1]) else ([int(x) for x in re.findall(r"slice (\d+)", q.lower())] or [0])
@@ -37,7 +40,7 @@ def default_responder(role: str, messages, schema):
                 {"step_number": 1, "description": first, "target_slice_ids": target, "refined_query": first},
                 {"step_number": 2, "description": second, "target_slice_ids": target, "refined_query": second, "depends_on": [1]},
             ]})
-        return json.dumps({"needs_clarification": False, "steps": [{"step_number": 1, "description": q, "target_slice_ids": target, "refined_query": q}]})
+        return json.dumps({"needs_clarification": False, "steps": [{"step_number": 1, "description": q, "kind": kind, "target_slice_ids": target, "refined_query": q}]})
     if role == "matcher":
         req = re.search(r'User Request: "(.*)"', text).group(1).lower()
         catalog = re.findall(r"- \*\*([a-z0-9-]+)\*\*:", text)

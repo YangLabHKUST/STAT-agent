@@ -11,22 +11,23 @@ from PIL import Image
 from stat_agent.core.colors import generate_distinct_colors
 
 
-def blank_background(adata) -> np.ndarray:
-    """White RGB image sized to the coordinate space (cell (x, y) == pixel (x, y))."""
+def coordinate_extent(adata) -> tuple[int, int]:
+    """``(width, height)`` of the coordinate space (cell (x, y) == pixel (x, y))."""
     x = adata.obs["x"].to_numpy(dtype=float)
     y = adata.obs["y"].to_numpy(dtype=float)
     ok = ~(np.isnan(x) | np.isnan(y))
     x, y = x[ok], y[ok]
     w = int(np.ceil(x.max())) + 1 if x.size else 1
     h = int(np.ceil(y.max())) + 1 if y.size else 1
-    return np.full((h, w, 3), 255, dtype=np.uint8)
+    return w, h
 
 
 def image_payload(slice_obj, quality: int = 75) -> dict:
     image = slice_obj.primary_image
-    is_scatter = image is None
     if image is None:
-        image = blank_background(slice_obj.adata)
+        # scatter-only slice: the viewer paints its own white background, so no JPEG is built or sent
+        w, h = coordinate_extent(slice_obj.adata)
+        return {"success": True, "image_data": "", "image_width": w, "image_height": h, "is_scatter": True, "slice_id": slice_obj.slice_id, "modality": slice_obj.modality}
     if image.dtype != np.uint8:
         lo, hi = float(image.min()), float(image.max())
         image = ((image - lo) / (hi - lo) * 255).astype(np.uint8) if hi > lo else np.zeros_like(image, dtype=np.uint8)
@@ -38,7 +39,7 @@ def image_payload(slice_obj, quality: int = 75) -> dict:
         "image_data": base64.b64encode(buf.getvalue()).decode("ascii"),
         "image_width": int(image.shape[1]),
         "image_height": int(image.shape[0]),
-        "is_scatter": is_scatter,
+        "is_scatter": False,
         "slice_id": slice_obj.slice_id,
         "modality": slice_obj.modality,
     }
@@ -122,4 +123,4 @@ def roi_payload(roi) -> dict:
     return info
 
 
-__all__ = ["image_payload", "overlay_payload", "expression_payload", "roi_payload", "blank_background"]
+__all__ = ["image_payload", "overlay_payload", "expression_payload", "roi_payload", "coordinate_extent"]

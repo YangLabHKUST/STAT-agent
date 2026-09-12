@@ -26,15 +26,18 @@ The web layer exposes one ordered event log per session. The browser opens a sin
    `execution_issue`, `provenance_update`, `usage`, `step_done`, `turn_done`.
 3. A clarification emits `prompt {prompt_id, kind: planner|verifier|skill_selection, question |
    questions | options}` and the turn state becomes `awaiting_input`. The client answers with
-   `POST /api/turns/{id}/reply {prompt_id, answer | option_index | answers}`; a mismatched or missing
+   `POST /api/turns/{id}/reply {prompt_id, answer | option_index | answers}` (the viewer sends `{prompt_id, kind: answer|option|prerequisites, text|index|answers}`; both are accepted and a reply with neither returns `400`) ``; a mismatched or missing
    prompt returns `409`. Auto mode emits `assumption` instead and continues.
-4. `POST /api/turns/{id}/cancel` is cooperative: a running code block finishes and its diff is still
-   recorded; the turn ends with `turn_cancelled`.
+4. `POST /api/turns/{id}/cancel` stops the turn cooperatively: a running code block is interrupted
+   (`code_block_done` with error type `Cancelled`) and its diff is still recorded; every stage
+   boundary checks the stop flag and an in-flight generation stream is dropped, so at most one
+   non-streaming model call completes after the stop. No reflection or analysis runs for a stopped
+   block. The turn ends with `turn_cancelled` followed by `turn_done {state: "cancelled"}`.
 5. Failures end with `turn_error` (a stage crashed) or `turn_done {state: "blocked"}` (a step could
    not run and a later step depended on it).
 
 Other events: `method_card`, `unguarded_mode`, `refusal`, `validate_result`,
-`skill_contract_violation`, `draft_offer` (out-of-registry path), `advice`, `warning`, `error`,
+`draft_offer` (out-of-registry path), `advice`, `warning`, `error`,
 `lock_state`, `session_reset`, `notebook_cell_added`.
 
 ## Errors

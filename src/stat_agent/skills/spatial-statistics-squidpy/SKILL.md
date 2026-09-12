@@ -16,7 +16,7 @@ default_skill: true
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obsp:spatial_connectivities, obsp:spatial_distances, uns:moranI, uns:*_co_occurrence, uns:*_ripley_*, uns:*_centrality_scores]
+produces: []  # outputs depend on the requested mode
 platforms: [linux, macos, windows]
 dependencies:
   python: [squidpy]

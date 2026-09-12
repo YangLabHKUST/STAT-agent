@@ -17,9 +17,7 @@ default_skill: true
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obs:x_original, obs:y_original, obs:x, obs:y]
-postconditions:
-  - {artifact: obs:x_original, check: exists}
+produces: []  # writes a new slice, not the target
 platforms: [linux, macos]
 dependencies:
   python: [torch]

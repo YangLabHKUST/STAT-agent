@@ -15,9 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: [obs:celltype]
 produces: [obs:niche_label]
-postconditions:
-  - {artifact: obs:niche_label, check: exists}
-  - {artifact: obs:niche_label, check: n_unique_min, params: {n: 2}, severity: warn}
 platforms: [linux, macos, windows]
 dependencies:
   python: [scanpy, scikit-learn]

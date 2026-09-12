@@ -5,7 +5,14 @@ from __future__ import annotations
 from langgraph.runtime import Runtime as LGRuntime
 from langgraph.types import Command
 
-from stat_agent.agent.nodes.common import answer_records, emit_prompt, obtain_decision, phase
+from stat_agent.agent.nodes.common import (
+    answer_records,
+    cancel_turn,
+    cancelled,
+    emit_prompt,
+    obtain_decision,
+    phase,
+)
 from stat_agent.agent.policy import Interrupt
 from stat_agent.agent.state import Context, TurnState, answers_for, current_step, memory_of, pending_interrupt
 from stat_agent.events.catalogue import (
@@ -50,18 +57,20 @@ async def filter_node(state: TurnState, runtime: LGRuntime[Context]):
 
 async def match_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
+    if cancelled(ctx):
+        return cancel_turn(ctx, state)
     phase(ctx, "matching")
     current = dict(state["current"])
     step = current_step(state) or {}
     if not ctx.ablation.matcher:
         current["matched"] = []
         ctx.emit(MatchComplete(step_id=current["step_id"], matched=[], reason="matcher disabled"))
-        return Command(update={"current": current}, goto="synthesize_card")
+        return _no_skill(ctx, current, step)
     catalog = ctx.registry.catalog(current.get("compatible", []))
     if not catalog:
         current["matched"] = []
         ctx.emit(MatchComplete(step_id=current["step_id"], matched=[], reason="no compatible skills"))
-        return Command(update={"current": current}, goto="synthesize_card")
+        return _no_skill(ctx, current, step)
     res = await ctx.roles.matcher.match(step.get("refined_query", state["query"]), catalog, top_k=ctx.settings.matcher_top_k, turn_id=state["turn_id"], step=current["step_number"])
     current["matched"] = res.selected
     ctx.emit(MatchComplete(step_id=current["step_id"], matched=res.selected))
@@ -74,6 +83,16 @@ async def match_node(state: TurnState, runtime: LGRuntime[Context]):
         pending = Interrupt(kind="skill_selection", step=current["step_number"], question="Multiple methods match your request. Which one should I use?", options=options)
         emit_prompt(ctx, pending, current["step_id"])
         return Command(update={"current": current, "pending": pending.model_dump()}, goto="ask_skill")
+    return _no_skill(ctx, current, step)
+
+
+def _no_skill(ctx: Context, current: dict, step: dict) -> Command:
+    """No registered skill: lightweight ``general`` steps run without a method card (the 0.1 general
+    analysis mode); anything that names a method goes through the out-of-registry protocol."""
+    if step.get("kind") == "general":
+        current.update(mode="unguarded", contract=None)
+        ctx.emit(UnguardedMode(step_id=current["step_id"], reason="general analysis: no method named, no skill required"))
+        return Command(update={"current": current}, goto="verify")
     return Command(update={"current": current}, goto="synthesize_card")
 
 
@@ -113,6 +132,8 @@ async def ask_skill_node(state: TurnState, runtime: LGRuntime[Context]):
 async def synthesize_card_node(state: TurnState, runtime: LGRuntime[Context]):
     """Out-of-registry protocol: contract first, then the same gates as a registered skill."""
     ctx = runtime.context
+    if cancelled(ctx):
+        return cancel_turn(ctx, state)
     current = dict(state["current"])
     step = current_step(state) or {}
     request = step.get("refined_query", state["query"])
@@ -124,6 +145,11 @@ async def synthesize_card_node(state: TurnState, runtime: LGRuntime[Context]):
     summary = ctx.summary()
     card = await ctx.roles.method_card.synthesize(request, summary, ctx.registry.catalog(), turn_id=state["turn_id"], step=current["step_number"])
     ctx.emit(MethodCardEvent(step_id=current["step_id"], card=card.model_dump(mode="json")))
+    if not card.named_method or card.confidence < 0.5:
+        # a generic workflow, not a method: no contract, no gates beyond the filter; the 0.1 general path
+        current.update(mode="unguarded", contract=None)
+        ctx.emit(UnguardedMode(step_id=current["step_id"], reason=f"general analysis: the request names no specific method ('{card.method_name}'), no skill required"))
+        return Command(update={"current": current}, goto="verify")
     targets = [summary.slice(i) for i in current["target_slice_ids"]]
     ok, reason = check_compatibility(card.filter_requirements, [t for t in targets if t is not None])
     if not ok:
@@ -137,6 +163,8 @@ async def synthesize_card_node(state: TurnState, runtime: LGRuntime[Context]):
 
 async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
+    if cancelled(ctx):
+        return cancel_turn(ctx, state)
     phase(ctx, "verifying")
     current = dict(state["current"])
     step_dict = current_step(state) or {}
@@ -162,7 +190,6 @@ async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
     )
     verdicts = [VerdictView(prerequisite=m, status="not_obtainable" if verdict.kind == "decline" else "ask_user", question=None) for m in verdict.missing] + ([VerdictView(prerequisite="(all)", status="satisfied")] if verdict.kind == "met" else [])
     ctx.emit(VerifyComplete(step_id=current["step_id"], skill=slug, verdicts=verdicts, decided_by=verdict.decided_by, complete_query=verdict.complete_query))
-    current["contract_conflict"] = verdict.contract_conflict
     if verdict.kind == "met":
         current["complete_query"] = verdict.complete_query or step.refined_query
         return Command(update={"current": current}, goto="generate")

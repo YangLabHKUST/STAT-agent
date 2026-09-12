@@ -34,8 +34,11 @@ def _definition(body: ROICreate) -> dict:
 async def list_rois(request: Request):
     app = state_of(request)
     session = app.require_session()
-    with session.lock.hold("gui:roi_list", timeout=app.config.lock_timeout_s):
-        rois = [roi_payload(r) for r in session.roi_manager.rois.values()]
+    try:
+        with session.lock.hold("gui:roi_list", timeout=app.config.lock_timeout_s):
+            rois = [roi_payload(r) for r in session.roi_manager.rois.values()]
+    except SessionBusy as exc:
+        raise _busy(exc) from exc
     return json({"success": True, "rois": rois, "ledger_version": app.agent.ledger.version if app.agent else 0}, headers=ledger_headers(app))
 
 

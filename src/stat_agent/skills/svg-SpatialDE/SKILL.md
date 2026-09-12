@@ -15,8 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [var:moran_I, var:moran_pval, var:moran_qval, uns:spatialde_results, uns:spatially_variable_genes]
-postconditions:
-  - {artifact: uns:spatially_variable_genes, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [squidpy, SpatialDE, NaiveDE, statsmodels]

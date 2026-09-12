@@ -32,9 +32,6 @@ schema_version: 2
 version: "1.0"
 consumes: [obs:celltype]      # inputs read from the session (kind:key)
 produces: [obs:my_label, uns:my_params]
-postconditions:
-  - {artifact: obs:my_label, check: exists}
-  - {artifact: obs:my_label, check: n_unique_min, params: {n: 2}, severity: warn}
 platforms: [linux, macos]
 dependencies:
   python: [scanpy, my-package]
@@ -45,8 +42,12 @@ defaults:                     # answers auto mode may assume for a prerequisite
 ```
 
 `consumes` drives staleness checks (a stale input blocks the step before any code runs) and the
-provenance graph; `produces` drives the output validation after execution and the linter;
-`postconditions` are checked by `validate_result`. Keys accept globs (`uns:*_nhood_enrichment`).
+provenance graph. `produces` is checked once the step's code has run (`validate_result`): every
+declared output must exist and must have been written by this step, otherwise the generator gets one
+continuation on the live namespace and the step is reported as partial if it is still missing. Declare only
+outputs that every run of the skill writes onto the target slice; a skill whose outputs depend on the
+chosen mode, or that creates a new slice, declares none and the check is skipped. The linter also
+checks `produces` against the code. Keys accept globs (`uns:*_nhood_enrichment`).
 
 ## 3. Body
 

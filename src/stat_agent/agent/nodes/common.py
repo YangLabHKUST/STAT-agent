@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from langgraph.types import interrupt
+from langgraph.types import Command, interrupt
 
 from stat_agent.agent.policy import Decision, Interrupt
 from stat_agent.agent.state import Context, TurnState
@@ -15,6 +15,7 @@ from stat_agent.events.catalogue import (
     PromptAnswered,
     PromptEvent,
     QuestionView,
+    TurnCancelled,
 )
 
 
@@ -107,4 +108,11 @@ def cancelled(ctx: Context) -> bool:
     return ctx.cancel.is_set()
 
 
-__all__ = ["phase", "emit_prompt", "obtain_decision", "answer_records", "roi_names", "cancelled"]
+def cancel_turn(ctx: Context, state: TurnState, *, partial: bool | None = None, update: dict | None = None) -> Command:
+    """End the turn now: the user pressed stop. Checked at every stage boundary so at most one
+    model call is in flight when the stop lands."""
+    ctx.emit(TurnCancelled(partial=bool(state.get("handoffs")) if partial is None else partial, ledger_version=ctx.ledger.version))
+    return Command(update={**(update or {}), "status": "cancelled"}, goto="finish_turn")
+
+
+__all__ = ["phase", "emit_prompt", "obtain_decision", "answer_records", "roi_names", "cancelled", "cancel_turn"]

@@ -41,11 +41,10 @@ class Generation(BaseModel):
 
 
 def parse_segments(response: str) -> Generation:
-    interpret = ""
-    m = _INTERPRET_RE.search(response)
-    if m:
-        interpret = m.group(1).strip()
-        response = response[: m.start()] + response[m.end() :]
+    found = [m.group(1).strip() for m in _INTERPRET_RE.finditer(response)]
+    interpret = "; ".join(dict.fromkeys(f for f in found if f))  # the model may write one marker per block
+    if found:
+        response = _INTERPRET_RE.sub("", response)
     segments: list[Segment] = []
     last = 0
     for cm in _CODE_RE.finditer(response):
@@ -78,6 +77,7 @@ class GeneratorRole(Role):
         state_block: str = "",
         plan: tuple[str, int, int, str] | None = None,
         unguarded_note: str = "",
+        continuation: str = "",
     ) -> dict:
         has_data = bool(summary and summary.has_data)
         entity = memory.entity_roi_text(list(roi_names)) if memory else ""
@@ -89,6 +89,7 @@ class GeneratorRole(Role):
             "state_block": state_block,
             "history_block": history_block(memory, "plain"),
             "skill_guidance": (unguarded_note + "\n\n" + skill_guidance).strip() if unguarded_note else skill_guidance,
+            "continuation_block": continuation,
             "user_query": query,
         }
 

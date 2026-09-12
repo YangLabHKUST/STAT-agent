@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from stat_agent.core.view import InterfaceState, SessionSummary
@@ -20,6 +22,7 @@ FALLBACK_QUESTION = "Could you please clarify which slice(s) you want to analyze
 class PlanStep(BaseModel):
     step_number: int
     description: str = ""
+    kind: Literal["skill", "general"] = "skill"  # general: no method needed, no method card
     target_slice_ids: list[int] = Field(default_factory=list)
     refined_query: str = ""
     depends_on: list[int] = Field(default_factory=list)
@@ -33,6 +36,7 @@ class PlanStep(BaseModel):
 class PlanOutput(BaseModel):
     needs_clarification: bool = False
     clarification_question: str | None = None
+    direct_answer: str | None = None
     steps: list[PlanStep] = Field(default_factory=list)
     facts_extracted: list[dict] = Field(default_factory=list)
 
@@ -40,6 +44,7 @@ class PlanOutput(BaseModel):
 class PlanResult(BaseModel):
     needs_clarification: bool
     question: str | None = None
+    direct_answer: str | None = None
     steps: list[PlanStep] = Field(default_factory=list)
     invalid_slice_ids: list[int] = Field(default_factory=list)
     fallback: bool = False
@@ -51,16 +56,17 @@ class PlannerRole(Role):
     prompt_name = "planner"
 
     @staticmethod
-    def variables(query: str, summary: SessionSummary, memory: ConversationMemory | None, answers: list[tuple[str, str]], interface: InterfaceState | None = None) -> dict:
+    def variables(query: str, summary: SessionSummary, memory: ConversationMemory | None, answers: list[tuple[str, str]], interface: InterfaceState | None = None, catalog: list[tuple[str, str]] | None = None) -> dict:
         return {
+            "skills_block": skills_block(catalog),
             "session_block": planner_session_block(summary) + interface_block(interface),
             "history_block": history_block(memory, "planner"),
             "user_query": query,
             "clarifications_block": clarifications_block(answers),
         }
 
-    async def plan(self, query: str, summary: SessionSummary, *, memory: ConversationMemory | None = None, answers: list[tuple[str, str]] = (), interface: InterfaceState | None = None, turn_id: str | None = None) -> PlanResult:
-        variables = self.variables(query, summary, memory, list(answers), interface)
+    async def plan(self, query: str, summary: SessionSummary, *, memory: ConversationMemory | None = None, answers: list[tuple[str, str]] = (), interface: InterfaceState | None = None, turn_id: str | None = None, catalog: list[tuple[str, str]] | None = None) -> PlanResult:
+        variables = self.variables(query, summary, memory, list(answers), interface, catalog)
         fake_input = {"query": query, "slices": [s.model_dump(include={"slice_id", "modality", "data_level", "n_obs", "has_celltype"}) for s in summary.slices], "rois": [r.name for r in summary.rois], "answers": list(answers)}
         comp = await self.call(variables, schema=PlanOutput, fake_input=fake_input, turn_id=turn_id)
         out: PlanOutput = comp.value
@@ -68,8 +74,15 @@ class PlannerRole(Role):
 
     @staticmethod
     def validate(out: PlanOutput, summary: SessionSummary, raw: str = "") -> PlanResult:
+        answer = (out.direct_answer or "").strip()
+        if answer and not out.steps:
+            return PlanResult(needs_clarification=False, direct_answer=answer, raw=raw)
         if out.needs_clarification:
-            return PlanResult(needs_clarification=True, question=out.clarification_question or FALLBACK_QUESTION, raw=raw)
+            question = (out.clarification_question or "").strip()
+            if question and "?" not in question and len(question) > 240:
+                # the model answered the user instead of asking (seen with capability questions)
+                return PlanResult(needs_clarification=False, direct_answer=question, raw=raw)
+            return PlanResult(needs_clarification=True, question=question or FALLBACK_QUESTION, raw=raw)
         steps = [s for s in out.steps if s.refined_query or s.description]
         if not steps:
             return PlanResult(needs_clarification=True, question=FALLBACK_QUESTION, fallback=True, raw=raw)
@@ -91,9 +104,24 @@ class PlannerRole(Role):
         return PlanResult(needs_clarification=False, steps=steps, raw=raw)
 
     @staticmethod
+    def skills_block(catalog: list[tuple[str, str]] | None) -> str:
+        return skills_block(catalog)
+
+    @staticmethod
     def single_step(query: str, summary: SessionSummary) -> PlanResult:
         """Ablation: no planner - one step over every loaded slice."""
         return PlanResult(needs_clarification=False, steps=[PlanStep(step_number=1, description=query, target_slice_ids=list(summary.slice_ids), refined_query=query)])
+
+
+def skills_block(catalog: list[tuple[str, str]] | None, max_desc: int = 150) -> str:
+    """Catalogue block for the planner (skill slug: what it does)."""
+    if not catalog:
+        return ""
+    lines = ["**Available analysis skills** (slug: what it does):"]
+    for slug, desc in catalog:
+        d = " ".join(str(desc).split())
+        lines.append(f"- {slug}: {d[:max_desc]}{'...' if len(d) > max_desc else ''}")
+    return "\n".join(lines)
 
 
 __all__ = ["PlanStep", "PlanOutput", "PlanResult", "PlannerRole", "FALLBACK_QUESTION"]

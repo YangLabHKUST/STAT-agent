@@ -70,4 +70,3 @@ def test_deepagents_driver_runs_same_tools(registry):
     assert agent.session.get_slice(0).has_celltype()
     stub = agent.loop_model
     assert {"task", "write_todos"} & set(stub.bound), stub.bound  # deepagents added its planning/subagent tools
-    assert "read_file" not in stub.bound or True  # filesystem tools may exist but the backend is empty

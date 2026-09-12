@@ -265,7 +265,7 @@ def lint_frontmatter(meta: SkillFrontmatter, raw: Dict, slug: str) -> List[Issue
         if not p.strip():
             issues.append(Issue("error", "empty_prerequisite", "empty prerequisite entry", slug))
     if meta.schema_version >= 2 and not meta.produces:
-        issues.append(Issue("warn", "no_produces", "schema_version 2 skill declares no produces", slug))
+        issues.append(Issue("info", "no_produces", "declares no produces (mode-dependent outputs or a new slice): the output check is skipped", slug))
     return issues
 
 

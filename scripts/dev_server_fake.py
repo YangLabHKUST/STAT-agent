@@ -14,13 +14,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import uvicorn  # noqa: E402
+from tests.fixtures.sessions import make_session, write_dataset  # noqa: E402
+from tests.graph.conftest import SKILLS_MINI, default_responder  # noqa: E402
 
 from stat_agent.config import Settings  # noqa: E402
 from stat_agent.skills import SkillRegistry  # noqa: E402
 from stat_agent.web.server import create_app  # noqa: E402
 from stat_agent.web.state import WebConfig  # noqa: E402
-from tests.fixtures.sessions import make_session, write_dataset  # noqa: E402
-from tests.graph.conftest import SKILLS_MINI, default_responder  # noqa: E402
 
 
 def main() -> int:

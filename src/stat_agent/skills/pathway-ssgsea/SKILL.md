@@ -18,8 +18,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [uns:ssgsea_scores, uns:ssgsea_params]
-postconditions:
-  - {artifact: uns:ssgsea_scores, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [gseapy]

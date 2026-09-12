@@ -17,8 +17,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obs:spatial_domain, uns:spatial_domain_params]
-postconditions:
-  - {artifact: obs:spatial_domain, check: exists}
 platforms: [linux, macos]
 dependencies:
   python: [STAGATE_pyG, torch, torch-geometric, scikit-learn]

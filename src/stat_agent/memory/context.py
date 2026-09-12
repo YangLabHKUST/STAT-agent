@@ -185,7 +185,12 @@ def skill_guidance_block(name: str, body: str) -> str:
 
 def plan_block(original_query: str, step_number: int, total_steps: int, description: str) -> str:
     bar = "=" * 80
-    return f"{bar}\n**MULTI-STEP PLAN EXECUTION**\n{bar}\n\n**Original Task:** {original_query}\n\n**Current Step:** [Step {step_number} of {total_steps}] {description}\n\n{bar}\n"
+    return (
+        f"{bar}\n**MULTI-STEP PLAN EXECUTION**\n{bar}\n\n**Original Task:** {original_query}\n\n**Current Step:** [Step {step_number} of {total_steps}] {description}\n\n"
+        "**Complete this step fully in this response.** If you need to inspect the data first, do it inside the same code block and continue with the analysis; "
+        "do not stop after an inspection and do not defer the step's work to a later step or turn.\n\n"
+        f"{bar}\n"
+    )
 
 
 __all__ = [

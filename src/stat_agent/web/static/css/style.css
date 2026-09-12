@@ -331,10 +331,21 @@ html, body {
 }
 
 /* --- Main Layout (Three Columns + resize handles) --- */
+/* #app is a full-height column: banner + header take their natural height, the main layout fills the rest.
+   (A fixed calc(100vh - 44px) overflowed the viewport whenever the reconnect banner was shown, and the
+   body clips overflow, so the chat's last lines and input became unreachable.) */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+#app-header { flex: 0 0 auto; }
+.reconnect-banner { flex: 0 0 auto; }
 .main-layout {
   display: grid;
   grid-template-columns: 1fr 3px 260px 3px 600px;
-  height: calc(100vh - 44px);
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* --- Resize Handles --- */
@@ -986,6 +997,7 @@ html, body {
 .chat-panel {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   background: var(--bg);
   overflow: hidden;
 }
@@ -1005,6 +1017,7 @@ html, body {
 
 .chat-messages {
   flex: 1;
+  min-height: 0; /* let the flex item shrink so its own scrollbar reaches the last message */
   overflow-y: auto;
   padding: 12px;
   display: flex;
@@ -1935,6 +1948,7 @@ h4.chat-heading, h5.chat-heading, h6.chat-heading { font-size: 0.95em; }
 .code-details { margin: 4px 0; }
 .code-details > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary, #666); }
 .stream-text { white-space: pre-wrap; font-size: 13px; opacity: 0.85; }
+.stream-code-chip { display: inline-block; margin: 2px 0; padding: 1px 8px; border-radius: 10px; background: var(--bg-muted, #f0f0f0); color: var(--text-secondary, #555); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
 .chat-hr-light { border: none; border-top: 1px solid var(--border-light, #eee); margin: 10px 0; }
 .clarification-ui.answered { opacity: 0.75; }
 .assumption-card .assumption-answer { margin-top: 4px; font-size: 12px; }

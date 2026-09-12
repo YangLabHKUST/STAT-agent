@@ -15,9 +15,7 @@ default_skill: false
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obs:leiden_integrated, uns:integration_bbknn, obsm:X_pca, obsm:X_umap]
-postconditions:
-  - {artifact: obs:leiden_integrated, check: exists}
+produces: [obs:leiden_integrated, uns:integration_bbknn]
 platforms: [linux, macos, windows]
 dependencies:
   python: [bbknn, scanpy, leidenalg]

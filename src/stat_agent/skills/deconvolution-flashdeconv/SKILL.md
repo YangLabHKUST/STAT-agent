@@ -17,8 +17,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obs:celltype, obsm:deconv_weights]
-postconditions:
-  - {artifact: obsm:deconv_weights, check: rows_match_obs}
 platforms: [linux, macos]
 dependencies:
   python: [flashdeconv]

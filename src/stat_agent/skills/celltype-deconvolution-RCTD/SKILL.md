@@ -16,10 +16,7 @@ default_skill: true
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obs:celltype, obsm:deconv_weights, var:Marker, var:highly_variable]
-postconditions:
-  - {artifact: obsm:deconv_weights, check: rows_match_obs}
-  - {artifact: obsm:deconv_weights, check: rows_sum_to_one, params: {tol: 0.05}, severity: warn}
+produces: [obs:celltype, obsm:deconv_weights]
 platforms: [linux, macos]
 dependencies:
   python: [ray, numba, scanpy]
@@ -156,8 +153,10 @@ filtered_spots = myRCTD["results"].index
 # Update session adata to only include filtered spots
 slice.adata = slice.adata[filtered_spots, :].copy()
 
-# Add deconvolution weights to obsm
-slice.adata.obsm["deconv_weights"] = myRCTD["results"]
+# Add deconvolution weights to obsm as proportions (RCTD full mode returns raw weights)
+weights = myRCTD["results"]
+weights = weights.div(weights.sum(axis=1).replace(0, np.nan), axis=0).fillna(0)
+slice.adata.obsm["deconv_weights"] = weights
 slice.adata.uns['has_deconv_weights'] = True
 
 # Update the dominant celltype

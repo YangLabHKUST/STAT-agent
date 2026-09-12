@@ -15,9 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [obs:celltype]
-postconditions:
-  - {artifact: obs:celltype, check: exists}
-  - {artifact: obs:celltype, check: n_unique_min, params: {n: 2}, severity: warn}
 platforms: [linux, macos, windows]
 dependencies:
   python: [scanpy]

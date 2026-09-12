@@ -58,7 +58,7 @@ def test_draft_skill_from_unguarded_step(registry, tmp_path, monkeypatch):
                 "---\nschema_version: 2\nname: rna-velocity-scvelo\ntitle: RNA velocity (scVelo)\nslug: rna-velocity-scvelo\n"
                 "description: Estimate RNA velocity from spliced and unspliced counts with scVelo on cell-level data.\n"
                 "version: \"1.0\"\nfilter_requirements:\n  modalities: [gene]\n  data_levels: [cell]\nprerequisites:\n  - \"Spliced and unspliced count layers\"\n"
-                "consumes:\n  - layers:spliced\nproduces:\n  - obsm:velocity\npostconditions:\n  - artifact: obsm:velocity\n    check: exists\ndependencies:\n  python: [scvelo]\ndefault_skill: true\n---\n\n# RNA velocity\n\n```python\nimport scvelo as scv\ns = session.get_slice(0)  # <-- SET TARGET SLICE\ns.adata.obsm['velocity'] = 1\n```\n"
+                "consumes:\n  - layers:spliced\nproduces:\n  - obsm:velocity\ndependencies:\n  python: [scvelo]\ndefault_skill: true\n---\n\n# RNA velocity\n\n```python\nimport scvelo as scv\ns = session.get_slice(0)  # <-- SET TARGET SLICE\ns.adata.obsm['velocity'] = 1\n```\n"
             )
         if role == "method_card":
             return json.dumps({"method_name": "scVelo RNA velocity", "description": "velocity" * 6, "filter_requirements": {"modalities": ["gene"], "data_levels": ["cell"]}, "prerequisites": [], "consumes": [], "produces": [{"kind": "obsm", "key": "velocity"}], "outline": ["a"], "risks": [], "confidence": 0.6})
@@ -79,3 +79,23 @@ def test_draft_skill_from_unguarded_step(registry, tmp_path, monkeypatch):
 
     reg = SkillRegistry.default(user_dir=tmp_path / "home" / "skills")
     assert "rna-velocity-scvelo" in reg and reg.get("rna-velocity-scvelo").origin == "user"
+
+
+def test_load_with_logs_dir_keeps_saved_directory_untouched(registry, tmp_path):
+    from tests.graph.conftest import default_responder, make_agent
+
+    from stat_agent.agent import Agent
+    from stat_agent.llm import CallLogger, LLMClient, UsageMeter
+
+    saved = tmp_path / "saved"
+    agent = make_agent(registry, session_dir=saved, durable=False, mode="auto")
+    asyncio.run(collect(agent.run_turn("annotate cell types")))
+    agent.save_state()
+    before = sorted(p.name for p in saved.iterdir())
+    logs = tmp_path / "logs"
+    llm = LLMClient(None, calllog=CallLogger(), meter=UsageMeter(), model_name="scripted", responder=default_responder)
+    reloaded = Agent.load(agent.session, llm, saved, logs_dir=logs, registry=registry, durable=False)
+    assert len(reloaded.memory.turns) == 1
+    asyncio.run(collect(reloaded.run_turn("detect niches")))
+    assert (logs / "events.jsonl").exists() and (logs / "calls").exists()
+    assert sorted(p.name for p in saved.iterdir()) == before

@@ -15,8 +15,6 @@ schema_version: 2
 version: "2.0"
 consumes: []
 produces: [uns:go_genes, uns:go_results, uns:go_params]
-postconditions:
-  - {artifact: uns:go_results, check: exists}
 platforms: [linux, macos, windows]
 dependencies:
   python: [gseapy]
