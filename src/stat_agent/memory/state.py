@@ -34,6 +34,7 @@ class StepHandoff(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     code_hash: str | None = None
     code: list[str] = Field(default_factory=list)
+    variables: list[str] = Field(default_factory=list)  # namespace names the step's code added
     complete_query: str | None = None
     response: str = ""
 
@@ -47,6 +48,8 @@ class StepHandoff(BaseModel):
             parts.append("  outputs: " + ", ".join(self.outputs))
         if self.key_findings:
             parts.append("  findings: " + "; ".join(self.key_findings[:3]))
+        if self.variables:
+            parts.append("  variables added: " + ", ".join(self.variables))
         if self.unresolved:
             parts.append("  unresolved: " + "; ".join(self.unresolved[:3]))
         return "\n".join(parts)

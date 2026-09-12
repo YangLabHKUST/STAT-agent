@@ -27,6 +27,7 @@ from stat_agent.events.catalogue import (
     VerdictView,
     VerifyComplete,
 )
+from stat_agent.memory.context import turn_steps_block
 from stat_agent.roles.planner import PlanStep
 from stat_agent.skills.filter import check_compatibility, filter_skills
 from stat_agent.skills.schema import MethodCard, SkillFrontmatter
@@ -183,6 +184,7 @@ async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
         summary,
         answers=answers_for(state, "verifier", skill=slug, step=current["step_number"]),
         memory=memory_of(state, ctx) if ctx.ablation.memory else None,
+        turn_steps=turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else "",
         stale=stale,
         skill_name=ctx.registry.get(slug).name if current.get("skill") else getattr(contract, "method_name", None),
         turn_id=state["turn_id"],

@@ -310,6 +310,47 @@ def test_continuation_gives_the_analyser_both_blocks(registry):
     assert seen["prompt"].index("Just looking") < seen["prompt"].index("value_counts") < seen["prompt"].index("annotated")
 
 
+def test_later_steps_see_earlier_steps_and_the_namespace(registry):
+    """Step 2's verifier, generator and analyser are told what step 1 did and which variables it left behind."""
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: dict[str, list[str]] = {"verifier": [], "generator": [], "analyzer": []}
+
+    def responder(role, messages, schema):
+        if role in seen:
+            seen[role].append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("annotate cell types then detect niches")))
+    assert [e.status for e in events if e.type == "step_done"] == ["done", "done"]
+    first, second = seen["generator"]
+    assert "**Completed steps in this turn" not in first and "**Python namespace (variables" not in first
+    assert "**Completed steps in this turn" in second and "Step 1 [mini-annotate] (done): Annotated cells." in second
+    assert "  changes: Added obs celltype." in second and "  variables added: s" in second
+    assert "s.adata.obs['celltype'] = 'T cell'" in second  # step 1's code, so names and keys are exact
+    assert "**Python namespace (variables" in second and "- s: DataSlice" in second
+    assert "**Completed steps in this turn" in seen["verifier"][-1] and "**Completed steps in this turn" in seen["analyzer"][-1]
+    assert [e for e in events if e.type == "plan_updated"][-1].steps[1].depends_on == [1]
+    handoffs = agent.memory.turns[-1].handoffs
+    assert handoffs[0].variables == ["s"] and handoffs[1].variables == []
+
+
+def test_memory_off_arm_gets_neither_block(registry):
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, mode="auto", responder=responder, ablation=AblationConfig(memory=False))
+    asyncio.run(collect(agent.run_turn("annotate cell types then detect niches")))
+    assert len(seen) == 2 and "**Completed steps in this turn" not in seen[1] and "**Python namespace (variables" not in seen[1]
+
+
 def test_failed_step_stays_failed_in_the_plan_view(registry):
     """Independent steps: step 1 fails for good, step 2 still runs, and no later plan view repaints step 1 as done."""
     from tests.graph.conftest import default_responder

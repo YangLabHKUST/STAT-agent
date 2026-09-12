@@ -53,6 +53,7 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
         parameters={"contract": current.get("contract")} if current.get("contract") else {},
         code_hash=None,
         code=[r.get("code", "") for r in current.get("results", []) if r.get("success")],
+        variables=list(dict.fromkeys(v for r in current.get("results", []) if r.get("success") for v in r.get("variables", []))),
         complete_query=current.get("complete_query"),
         response=response,
     )
@@ -66,7 +67,7 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
     if stop:
         for j in range(next_idx, len(plan)):
             statuses[j] = "skipped"
-    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_done", steps=[PlanStepView(step_id=f"s{i + 1}", index=i + 1, description=s.get("description", ""), status=statuses.get(i) or ("pending" if i >= next_idx else "done"), target_slices=list(s.get("target_slice_ids", [])), skill=s.get("skill")) for i, s in enumerate(plan)]))
+    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_done", steps=[PlanStepView(step_id=f"s{i + 1}", index=i + 1, description=s.get("description", ""), status=statuses.get(i) or ("pending" if i >= next_idx else "done"), target_slices=list(s.get("target_slice_ids", [])), depends_on=list(s.get("depends_on", [])), skill=s.get("skill")) for i, s in enumerate(plan)]))
     figures = list(state.get("figures", [])) + list(current.get("figures", []))
     update = {"handoffs": [handoff.model_dump()], "figures": figures, "step_index": next_idx, "step_statuses": {str(k): v for k, v in statuses.items()}}
     if stop:

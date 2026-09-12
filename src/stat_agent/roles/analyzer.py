@@ -7,7 +7,7 @@ import re
 from pydantic import BaseModel, Field
 
 from stat_agent.core.view import SessionSummary
-from stat_agent.memory.context import analyzer_session_info, history_block
+from stat_agent.memory.context import analyzer_session_info, history_block, with_turn_steps
 from stat_agent.memory.state import ConversationMemory
 from stat_agent.roles.base import Role
 from stat_agent.roles.generator import Segment
@@ -41,6 +41,7 @@ class BlockResult(BaseModel):
     stdout: str = ""
     error: str | None = None
     success: bool = True
+    variables: list[str] = Field(default_factory=list)  # namespace names this block added
 
 
 def assemble_context(segments: list[Segment], results: list[BlockResult], max_output: int = 3000) -> str:
@@ -80,6 +81,7 @@ class AnalyzerRole(Role):
         interpret_instruction: str = "",
         produced: list[str] = (),
         incomplete: list[str] = (),
+        turn_steps: str = "",
         turn_id: str | None = None,
         step: int | None = None,
     ) -> Analysis:
@@ -88,7 +90,7 @@ class AnalyzerRole(Role):
             context += "\n**Note:** the code ran without errors, but the step's declared outputs were not produced: " + "; ".join(incomplete) + "\n"
         variables = {
             "session_info": analyzer_session_info(summary, roi_names) if summary else "",
-            "history_block": history_block(memory, "plain"),
+            "history_block": with_turn_steps(history_block(memory, "plain"), turn_steps),
             "user_query": user_query,
             "assembled_context": context,
             "has_interpret": bool(interpret_instruction),

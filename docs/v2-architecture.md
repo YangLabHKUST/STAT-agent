@@ -128,4 +128,9 @@ and the agent are two views of one state. The event `provenance_update` carries 
 
 Memory keeps a `TurnRecord` per turn with one `StepHandoff` per step (inputs, outputs, summary,
 findings, code), a facts map, a verbatim window of recent turns and a rolling summary regenerated
-when the window overflows. Each role receives only the context it needs.
+when the window overflows. Each role receives only the context it needs. Within a turn, the
+verifier, generator and analyser of a later step also receive the completed steps so far (summary,
+data changes, findings, artefacts, the namespace variables each step added and, within a budget,
+its code), and the generator sees a listing of the live Python namespace. That namespace is one
+dictionary per session in `Runtime`: variables persist across code blocks, steps and turns, but not
+across a session save and reload, so the generator is told to write final results into the AnnData.

@@ -12,7 +12,12 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from stat_agent.core.view import SessionSummary
-from stat_agent.memory.context import history_block, user_responses_block, verifier_session_block
+from stat_agent.memory.context import (
+    history_block,
+    user_responses_block,
+    verifier_session_block,
+    with_turn_steps,
+)
 from stat_agent.memory.state import ConversationMemory
 from stat_agent.roles.base import Role
 from stat_agent.roles.planner import PlanStep
@@ -113,6 +118,7 @@ class VerifierRole(Role):
         memory: ConversationMemory | None = None,
         stale: list[str] = (),
         skill_name: str | None = None,
+        turn_steps: str = "",
         turn_id: str | None = None,
         step_index: int | None = None,
     ) -> Verdict:
@@ -129,7 +135,7 @@ class VerifierRole(Role):
             "prerequisites_list": prereqs,
             "session_block": verifier_session_block(summary, step.target_slice_ids, stale),
             "user_responses_block": user_responses_block(answers),
-            "history_block": history_block(memory, "verifier"),
+            "history_block": with_turn_steps(history_block(memory, "verifier"), turn_steps),
         }
         fake_input = {"skill": contract.slug, "query": step.refined_query, "targets": [{"slice_id": s.slice_id, "has_celltype": s.has_celltype, "obs": sorted(s.obs_columns)[:40]} for s in (summary.slice(i) for i in step.target_slice_ids) if s], "answers": list(answers)}
         comp = await self.call(variables, schema=VerifierOutput, fake_input=fake_input, turn_id=turn_id, step=step_index)

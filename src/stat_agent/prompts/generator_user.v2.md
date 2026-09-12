@@ -3,7 +3,7 @@ id: generator_user
 version: 2
 role: generator
 description: Code-generator user message - session context, memory, skill guidance, query.
-source: "generator_user.v1 plus one closing instruction (finish the requested work in this response)"
+source: "generator_user.v1 plus: finish the requested work in this response; the continuation block; the completed steps of this turn; the Python namespace listing"
 ---
 {% if plan_block %}{{ plan_block }}
 {% endif %}{% if session_block %}**Current Session:**
@@ -17,6 +17,10 @@ source: "generator_user.v1 plus one closing instruction (finish the requested wo
 {% endif %}{% if history_block %}**Conversation History:**
 {{ history_block }}
 **[End of Conversation History]**
+
+{% endif %}{% if steps_block %}{{ steps_block }}
+
+{% endif %}{% if namespace_block %}{{ namespace_block }}
 
 {% endif %}{% if skill_guidance %}================================================================================
 **IMPORTANT: SKILL GUIDANCE PROVIDED**

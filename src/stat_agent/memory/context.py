@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from stat_agent.core.view import InterfaceState, SessionSummary, SliceSummary
-from stat_agent.memory.state import ConversationMemory
+from stat_agent.memory.state import ConversationMemory, StepHandoff
 
 
 def planner_slice_line(s: SliceSummary) -> str:
@@ -193,6 +193,51 @@ def plan_block(original_query: str, step_number: int, total_steps: int, descript
     )
 
 
+def turn_steps_block(handoffs: Iterable[dict | StepHandoff], *, code_budget: int = 6000) -> str:
+    """The completed steps of the current turn, for the roles of a later step: what each did and
+    changed, the artefacts and namespace variables it left behind and, latest steps first within
+    `code_budget` characters, its code. Empty for the first step."""
+    items = [h if isinstance(h, StepHandoff) else StepHandoff.model_validate(h) for h in handoffs]
+    if not items:
+        return ""
+    code_for: dict[int, str] = {}
+    remaining = code_budget
+    for h in reversed(items):
+        code = "\n\n".join(c for c in h.code if c.strip())
+        if h.success and code and len(code) <= remaining:
+            code_for[h.step_number] = code
+            remaining -= len(code)
+    lines = ["**Completed steps in this turn (their variables are still defined in the Python namespace; reuse them, do not recompute):**"]
+    for h in items:
+        head = f"Step {h.step_number}" + (f" [{h.skill}]" if h.skill else "") + (" (done)" if h.success else " (FAILED)")
+        lines.append(f"{head}: {h.summary or h.description}")
+        if h.data_changes:
+            lines.append(f"  changes: {h.data_changes}")
+        if h.key_findings:
+            lines.append("  findings: " + "; ".join(h.key_findings[:3]))
+        if h.outputs:
+            lines.append("  artefacts: " + ", ".join(h.outputs))
+        if h.variables:
+            lines.append("  variables added: " + ", ".join(h.variables))
+        if h.unresolved:
+            lines.append("  unresolved: " + "; ".join(h.unresolved[:3]))
+        if h.step_number in code_for:
+            lines.append("  code:\n```python\n" + code_for[h.step_number] + "\n```")
+    return "\n".join(lines)
+
+
+def namespace_block(items: Iterable[tuple[str, str]]) -> str:
+    """The live Python namespace as the generator sees it (from `Runtime.describe_namespace`)."""
+    rows = [f"- {name}: {desc}" for name, desc in items]
+    if not rows:
+        return ""
+    return "**Python namespace (variables from earlier code blocks, steps and turns; they persist and can be reused):**\n" + "\n".join(rows)
+
+
+def with_turn_steps(history: str, turn_steps: str) -> str:
+    return "\n\n".join(p for p in (history, turn_steps) if p)
+
+
 __all__ = [
     "planner_session_block",
     "history_block",
@@ -204,4 +249,7 @@ __all__ = [
     "analyzer_session_info",
     "skill_guidance_block",
     "plan_block",
+    "turn_steps_block",
+    "namespace_block",
+    "with_turn_steps",
 ]

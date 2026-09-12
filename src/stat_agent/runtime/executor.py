@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import inspect
 import io
 import logging
 import sys
@@ -154,6 +155,48 @@ class RuntimeBusy(RuntimeError):
     pass
 
 
+SEEDED_NAMES = ("session", "np", "pd")
+
+
+def describe_value(v: Any) -> str:
+    """One short line about a namespace value (type, shape, the keys a later step needs)."""
+    try:
+        tname = type(v).__name__
+        if inspect.ismodule(v):
+            return "module"
+        if inspect.isfunction(v) or inspect.isbuiltin(v):
+            return "function"
+        if inspect.isclass(v):
+            return "class"
+        if isinstance(v, (bool, int, float, complex)):
+            return f"{tname} = {v!r}"[:80]
+        if isinstance(v, str):
+            r = repr(v)
+            return f"str = {r[:70]}{'…' if len(r) > 70 else ''}"
+        if isinstance(v, (list, tuple, set, frozenset)):
+            return f"{tname} ({len(v)} items)"
+        if isinstance(v, dict):
+            keys = ", ".join(str(k) for k in list(v)[:8])
+            return f"dict ({len(v)} keys: {keys}{', …' if len(v) > 8 else ''})"
+        if tname == "AnnData":
+            obs = ", ".join(str(c) for c in list(v.obs.columns)[:12]) + (", …" if v.obs.shape[1] > 12 else "")
+            obsm = ", ".join(str(k) for k in list(v.obsm.keys())[:6])
+            return f"AnnData ({v.n_obs:,} × {v.n_vars:,}; obs: {obs}" + (f"; obsm: {obsm}" if obsm else "") + ")"
+        if tname == "DataFrame":
+            cols = ", ".join(str(c) for c in list(v.columns)[:10]) + (", …" if v.shape[1] > 10 else "")
+            return f"DataFrame ({v.shape[0]:,} × {v.shape[1]}; columns: {cols})"
+        if tname == "Series":
+            return f"Series ({len(v):,}, {v.dtype}" + (f", name {v.name!r}" if v.name is not None else "") + ")"
+        if hasattr(v, "shape"):
+            shape = tuple(v.shape)
+            return f"{tname} (shape {shape}" + (f", {v.dtype}" if hasattr(v, "dtype") else "") + ")"
+        if hasattr(v, "__len__"):
+            return f"{tname} ({len(v)} items)"
+        return tname
+    except Exception:  # noqa: BLE001 - a description must never fail a turn
+        return type(v).__name__
+
+
 # ---- runtime --------------------------------------------------------------------------------------------------
 
 
@@ -195,6 +238,14 @@ class Runtime:
         import pandas as pd
 
         self.namespace = {"session": self.session, "np": np, "pd": pd}
+
+    def user_variables(self) -> list[str]:
+        """Names user code left in the namespace (oldest first): no seeds, no modules, no private names."""
+        return [k for k, v in self.namespace.items() if not k.startswith("_") and k not in SEEDED_NAMES and not inspect.ismodule(v)]
+
+    def describe_namespace(self, limit: int = 40) -> list[tuple[str, str]]:
+        """(name, description) for the last `limit` user variables; what the generator is shown."""
+        return [(n, describe_value(self.namespace[n])) for n in self.user_variables()[-limit:]]
 
     @property
     def busy(self) -> bool:

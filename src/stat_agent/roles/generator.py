@@ -78,6 +78,8 @@ class GeneratorRole(Role):
         plan: tuple[str, int, int, str] | None = None,
         unguarded_note: str = "",
         continuation: str = "",
+        turn_steps: str = "",
+        namespace: str = "",
     ) -> dict:
         has_data = bool(summary and summary.has_data)
         entity = memory.entity_roi_text(list(roi_names)) if memory else ""
@@ -90,6 +92,8 @@ class GeneratorRole(Role):
             "history_block": history_block(memory, "plain"),
             "skill_guidance": (unguarded_note + "\n\n" + skill_guidance).strip() if unguarded_note else skill_guidance,
             "continuation_block": continuation,
+            "steps_block": turn_steps,
+            "namespace_block": namespace,
             "user_query": query,
         }
 

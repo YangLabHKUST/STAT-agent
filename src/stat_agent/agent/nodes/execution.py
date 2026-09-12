@@ -23,6 +23,7 @@ from stat_agent.events.catalogue import (
     ValidateResult,
 )
 from stat_agent.ledger.provenance import StepRef
+from stat_agent.memory.context import namespace_block, turn_steps_block
 from stat_agent.roles.analyzer import BlockResult
 from stat_agent.roles.generator import Generation, GeneratorRole
 from stat_agent.roles.reflector import retry_allowed, should_attempt_fix
@@ -75,13 +76,15 @@ async def generate_node(state: TurnState, runtime: LGRuntime[Context]):
     query = current.get("complete_query") or step.get("refined_query") or state["query"]
     continuation_note = ""
     if current.get("continuation"):
-        names = [k for k in ctx.runtime.namespace if not k.startswith("_") and k not in ("session", "np", "pd")][-40:]
         continuation_note = (
             "**Continuation of this step.** The code you wrote earlier in this step ran successfully and its variables are still defined"
-            f" (available: {', '.join(names) if names else 'none'}). The step is not finished: its declared outputs are still missing: "
+            " (listed under Python namespace above). The step is not finished: its declared outputs are still missing: "
             + "; ".join(current["continuation"]["missing"])
             + ". Continue from where that code stopped and produce them in this response. Do not repeat work that already ran."
         )
+    # what the earlier steps of this turn did and what the live namespace holds (memory-off arm: neither)
+    turn_steps = turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else ""
+    namespace_text = namespace_block(ctx.runtime.describe_namespace()) if ctx.ablation.memory else ""
     variables = GeneratorRole.variables(
         query,
         summary,
@@ -92,6 +95,8 @@ async def generate_node(state: TurnState, runtime: LGRuntime[Context]):
         plan=plan_tuple,
         unguarded_note=unguarded_note,
         continuation=continuation_note,
+        turn_steps=turn_steps,
+        namespace=namespace_text,
     )
     fake_input = {"query": query, "skill": current.get("skill"), "targets": current["target_slice_ids"], "step": current["step_number"]}
     gen: Generation | None = None
@@ -277,7 +282,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                 except Exception:  # noqa: BLE001
                     pass
             if success:
-                results.append(BlockResult(code=code, stdout=res.stdout, success=True).model_dump())
+                results.append(BlockResult(code=code, stdout=res.stdout, success=True, variables=list(res.namespace_added)).model_dump())
                 break
             if cancelled(ctx):
                 # the user stopped the run: its provenance is recorded above; no reflection, no analysis
@@ -357,6 +362,7 @@ async def analyze_node(state: TurnState, runtime: LGRuntime[Context]):
                 interpret_instruction=current.get("interpret", "") or "",
                 produced=produced,
                 incomplete=list(current.get("incomplete") or []),
+                turn_steps=turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else "",
                 turn_id=state["turn_id"],
                 step=current["step_number"],
             )
