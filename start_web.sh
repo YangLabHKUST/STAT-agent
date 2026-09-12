@@ -2,7 +2,7 @@
 
 # Startup script for STAT web interface + Jupyter Lab
 
-FLASK_PORT=${1:-8889}
+WEB_PORT=${1:-8889}
 JUPYTER_PORT=${2:-8890}
 
 # Ensure HTTPS proxy is set (needed for POE/external LLM APIs)
@@ -13,7 +13,7 @@ echo "STAT - Spatial Transcriptomics Analysis"
 echo "========================================"
 echo ""
 echo "Starting services:"
-echo "  Web UI:       http://0.0.0.0:${FLASK_PORT}"
+echo "  Web UI:       http://0.0.0.0:${WEB_PORT}"
 echo "  Jupyter Lab:  http://0.0.0.0:${JUPYTER_PORT}"
 echo ""
 echo "Press Ctrl+C to stop all services"
@@ -39,5 +39,5 @@ JUPYTER_PID=$!
 # Cleanup on exit
 trap "kill $JUPYTER_PID 2>/dev/null; exit" INT TERM EXIT
 
-# Start Flask app (foreground)
-python3 -m stat_agent.web.app --host 0.0.0.0 --port ${FLASK_PORT} --jupyter-port ${JUPYTER_PORT}
+# Start the STAT web server (Starlette + uvicorn, foreground)
+python3 -m stat_agent.web --host 0.0.0.0 --port ${WEB_PORT} --jupyter-port ${JUPYTER_PORT}

@@ -1,164 +1,137 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "stat-agent"
-version = "0.1.27"
-description = "STAT: Spatial Transcriptomics Analytical agenT - AI-powered platform for spatial omics analysis"
+version = "2.0.0"
+description = "STAT: Spatial Transcriptomics Analytical agenT - AI-powered, provenance-aware spatial omics analysis"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "BSD-3-Clause"
-authors = [
-    {name = "Yihang Chen", email = "ychenlp@connect.ust.hk"},
-]
-keywords = [
-    "spatial transcriptomics",
-    "single-cell",
-    "agent",
-    "AI",
-    "bioinformatics",
-    "anndata",
-    "scanpy",
-]
+authors = [{ name = "Yihang Chen", email = "ychenlp@connect.ust.hk" }]
+keywords = ["spatial transcriptomics", "single-cell", "agent", "AI", "bioinformatics", "anndata", "scanpy", "langgraph"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Science/Research",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Bio-Informatics",
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Bio-Informatics",
 ]
 
 dependencies = [
-    # Data
-    "numpy>=1.21",
-    "pandas>=1.3",
-    "anndata>=0.9",
-    "scipy>=1.7",
-    "scanpy>=1.9",
-
-    # Spatial
-    "geopandas>=0.10",
-    "shapely>=2.0",
-
-    # Imaging
-    "pillow>=9.0",
-    "tifffile>=2021.0",
-
-    # Visualization
-    "matplotlib>=3.5",
-    "seaborn>=0.11",
-
-    # Web
-    "flask>=3.0",
-
-    # LLM providers
-    "anthropic>=0.18",
-    "openai>=1.12",
-    "google-generativeai>=0.5",
-
-    # Config
-    "pyyaml>=6.0",
+  # data
+  "numpy>=1.24",
+  "pandas>=2.0",
+  "anndata>=0.10",
+  "scipy>=1.10",
+  "scanpy>=1.10",
+  "geopandas>=0.14",
+  "shapely>=2.0",
+  "pillow>=9.0",
+  "tifffile>=2022.0",
+  "matplotlib>=3.7",
+  "pyyaml>=6.0",
+  "jinja2>=3.1",
+  "pydantic>=2.6,<3",
+  # orchestration + LLM access
+  "langgraph>=1.0,<2",
+  "langchain>=1.0,<2",
+  "langchain-core>=1.0,<2",
+  "langchain-openai>=1.0,<2",
+  "langchain-anthropic>=1.0,<2",
+  "langchain-google-genai>=2.0",
+  "langgraph-checkpoint-sqlite>=2.0",
+  # web
+  "starlette>=0.40",
+  "uvicorn>=0.30",
+  "sse-starlette>=2.0",
+  "python-multipart>=0.0.9",
+  "nbformat>=5.9",
 ]
 
 [project.optional-dependencies]
-# All analysis skill dependencies
-skills = [
-    # Spatial statistics & neighborhood enrichment
-    "squidpy>=1.2",
-    "esda>=2.4.0",
-
-    # Enrichment (GO, ORA, ssGSEA)
-    "gseapy>=1.0",
-
-    # Cell communication
-    "liana",
-    "cellphonedb>=5.0,<6.0",
-    "plotnine>=0.12",           # LIANA visualization
-
-    # Batch integration (Harmony, BBKNN, Scanorama)
-    "harmonypy>=0.0.9",
-    "bbknn>=1.5.0",
-    "scanorama>=1.7.0",
-
-    # Cell type annotation (scANVI, Tangram)
-    "scvi-tools>=1.0,<2.0",
-    "tangram-sc>=1.0.0",
-
-    # Deconvolution (RCTD, FlashDeconv, Cell2location)
-    "qpsolvers[osqp]>=4.0",   # bundled RCTD needs the osqp QP backend specifically
-    "ray>=2.0",
-    "flashdeconv>=0.1.0",
-    "cell2location>=0.1.4",
-
-    # Trajectory / pseudotime (Palantir)
-    "palantir>=1.0.0",
-
-    # Spatially variable genes
-    "NaiveDE>=0.1",
-    "SpatialDE>=1.1",
-
-    # Clustering / graph (pin igraph<1.0 for louvain compatibility)
-    "scikit-misc>=0.5",
-    "igraph>=0.9,<1.0",
-
-    # Spatial domains (SpaGCN, STAGATE, GraphST) + alignment (STalign)
-    "torch>=2.0",
-    "SpaGCN>=1.2.5",
-    "GraphST>=1.1.0",
-    # STAGATE_pyG: pip install git+https://github.com/QIFEIDKN/STAGATE_pyG.git
-    # Also needs: torch_geometric, torch_sparse, torch_scatter (from PyG wheels)
-
-    # Slice registration (PASTE)
-    "paste-bio>=1.0.0",
-    "POT>=0.9.0,<0.9.5",       # 0.9.5+ adds 6th arg to cg's line_search call,
-                                # which breaks PASTE's 5-arg local line_search
-
-    # Slice alignment (bundled STalign needs plotly for interactive annotators)
-    "plotly>=5",
-
-    "pynrrd>=1.0",
-]
-
-# Development
+loop = ["deepagents>=0.7.13,<0.8"]
+research = ["tavily-python>=0.5"]
 dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.23",
-    "ruff>=0.1",
+  "pytest>=8",
+  "pytest-timeout>=2.3",
+  "hypothesis>=6.100",
+  "ruff>=0.5",
+  "httpx>=0.27",
+  "anyio>=4",
+]
+bench = ["jsonschema>=4", "tabulate>=0.9"]
+# Analysis skill dependencies (carried over from STAT 0.1.x; install selectively)
+skills = [
+  "squidpy>=1.2",
+  "esda>=2.4.0",
+  "gseapy>=1.0",
+  "liana",
+  "cellphonedb>=5.0,<6.0",
+  "plotnine>=0.12",
+  "harmonypy>=0.0.9",
+  "bbknn>=1.5.0",
+  "scanorama>=1.7.0",
+  "scvi-tools>=1.0,<2.0",
+  "tangram-sc>=1.0.0",
+  "qpsolvers[osqp]>=4.0",
+  "ray>=2.0",
+  "flashdeconv>=0.1.0",
+  "cell2location>=0.1.4",
+  "palantir>=1.0.0",
+  "NaiveDE>=0.1",
+  "SpatialDE>=1.1",
+  "scikit-misc>=0.5",
+  "igraph>=0.9,<1.0",
+  "torch>=2.0",
+  "SpaGCN>=1.2.5",
+  "GraphST>=1.1.0",
+  "paste-bio>=1.0.0",
+  "POT>=0.9.0,<0.9.5",
+  "plotly>=5",
+  "pynrrd>=1.0",
 ]
 
 [project.scripts]
-stat-web = "stat_agent.web.app:main"
+stat-agent = "stat_agent.cli.main:main"
+stat-web = "stat_agent.web.__main__:main"
+stat-bench = "stat_bench.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/chenyhvvvv/STAT-agent"
 Repository = "https://github.com/chenyhvvvv/STAT-agent"
-"Bug Tracker" = "https://github.com/chenyhvvvv/STAT-agent/issues"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["stat_agent*"]
-exclude = ["tests*", "docs*", "external*", "paper*", "examples*"]
+where = ["src"]
+include = ["stat_agent*", "stat_bench*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.md", "*.yaml", "*.yml"]
+"stat_agent" = ["prompts/*.md", "skills/*/SKILL.md", "skills/*/**/*.py", "skills/*/**/*.md", "skills/*/**/*.txt", "skills/*/**/*.json", "skills/*/**/*.yaml"]
 "stat_agent.web" = ["templates/**/*", "static/**/*"]
-"stat_agent.skills" = ["**/*"]
+"stat_bench" = ["suites/**/*", "schemas/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
-python_classes = "Test*"
-python_functions = "test_*"
-asyncio_mode = "auto"
+timeout = 120
+markers = [
+  "live: needs real LLM providers (STAT_LIVE=1)",
+  "skills: runs real analysis skills on real data (opt-in)",
+  "slow: slow tests",
+]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
-line-length = 120
-target-version = "py39"
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+extend-exclude = ["src/stat_agent/skills/*/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
-ignore = ["E501"]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B008", "B905"]

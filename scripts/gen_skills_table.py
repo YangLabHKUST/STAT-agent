@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SKILLS_DIR = REPO_ROOT / "stat_agent" / "skills"
+SKILLS_DIR = REPO_ROOT / "src" / "stat_agent" / "skills"
 README = REPO_ROOT / "README.md"
 
 START = "<!-- SKILLS-TABLE-START -->"
@@ -120,7 +120,7 @@ def render() -> str:
             meta = skills[slug]
             title = meta.get("title") or meta.get("name") or slug
             desc = first_sentence(meta.get("description", ""))
-            link = f"stat_agent/skills/{slug}/SKILL.md"
+            link = f"src/stat_agent/skills/{slug}/SKILL.md"
             lines.append(f"| [{title}]({link}) | {desc} |")
         lines.append("")
 
@@ -134,7 +134,7 @@ def render() -> str:
             meta = skills[slug]
             title = meta.get("title") or meta.get("name") or slug
             desc = first_sentence(meta.get("description", ""))
-            link = f"stat_agent/skills/{slug}/SKILL.md"
+            link = f"src/stat_agent/skills/{slug}/SKILL.md"
             lines.append(f"| [{title}]({link}) | {desc} |")
         lines.append("")
 

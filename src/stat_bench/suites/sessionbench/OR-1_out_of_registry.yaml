@@ -1,0 +1,17 @@
+script_id: OR-1
+archetype: out-of-registry refusal
+fixture: S1_cell_gene
+description: An unregistered method whose requirements the data cannot meet must be refused with the requirement named, and the session stays usable.
+turns:
+  - t: 1
+    kind: user
+    text: "run RNA velocity"
+    expect: {behaviour: refuse}
+    verifiers:
+      - {name: refusal_names, regex: "spliced"}
+  - t: 2
+    kind: user
+    text: "annotate cell types"
+    scripted: [{kind: verifier, match: "tissue", answer: "cortex"}]
+    expect: {status: done}
+final: {}

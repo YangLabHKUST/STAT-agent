@@ -1,0 +1,17 @@
+script_id: RE-1
+archetype: recovery
+fixture: S1_cell_gene
+description: A turn that fails must leave the session usable; the next turn succeeds.
+turns:
+  - t: 1
+    kind: user
+    text: "crash please, unfixable (this request is engineered to fail)"
+    expect: {status: blocked}
+  - t: 2
+    kind: user
+    text: "annotate cell types"
+    scripted: [{kind: verifier, match: "tissue", answer: "cortex"}]
+    expect: {status: done}
+    verifiers:
+      - {name: session_usable_after_failure, t_fail: 1, t_next: 2}
+final: {}

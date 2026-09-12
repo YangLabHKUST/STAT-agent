@@ -1,0 +1,22 @@
+script_id: CO-1
+archetype: correction
+fixture: S1_cell_gene_noCT
+description: The user corrects an input after the first attempt; the earlier result must be replaced, not duplicated.
+turns:
+  - t: 1
+    kind: user
+    text: "annotate cell types"
+    scripted: [{kind: verifier, match: "tissue", answer: "liver"}]
+    expect: {status: done}
+    verifiers:
+      - {name: column_exists, slice: 0, key: celltype}
+  - t: 2
+    kind: user
+    text: "sorry, the tissue is brain cortex - annotate cell types again"
+    scripted: [{kind: verifier, match: "tissue", answer: "brain cortex"}]
+    expect: {status: done}
+    verifiers:
+      - {name: not_stale, key: "obs:celltype"}
+final:
+  verifiers:
+    - {name: turn_status, turn: 2, status: done}

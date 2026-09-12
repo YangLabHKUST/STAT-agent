@@ -56,8 +56,12 @@ wandb/
 # External reference projects
 external/
 
-# Internal development notes
-docs/
+# Internal development notes (the v2 user docs listed below stay tracked)
+docs/*
+!docs/v2-architecture.md
+!docs/event-protocol.md
+!docs/adding-a-skill.md
+!docs/benchmarking.md
 paper/
 
 # Local workflow scripts
@@ -71,3 +75,7 @@ CLAUDE.md
 
 # Local skill test scaffold (not part of the package)
 tests/skills/
+
+# STAT v2 session state
+.stat_agent/
+checkpoints.sqlite

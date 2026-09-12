@@ -1,0 +1,26 @@
+script_id: CR-1
+archetype: cross-turn reference
+fixture: S1_cell_gene
+description: Draw an ROI, run an analysis restricted to it, then refer back to the result without recomputing.
+setup: {}
+turns:
+  - t: 1
+    kind: gui
+    action: draw_roi
+    args: {name: tumor, slice_id: 0, geometry: {type: bbox, x_min: 0, x_max: 50, y_min: 0, y_max: 50}}
+  - t: 2
+    kind: user
+    text: "Label the cells inside the tumor ROI as 'in_roi' in a new obs column called roi_label, others as 'out'"
+    expect: {status: done}
+    verifiers:
+      - {name: column_exists, slice: 0, key: roi_label}
+      - {name: artefact_inputs_from_roi, key: "obs:roi_label", roi: tumor}
+  - t: 3
+    kind: gui
+    action: delete_roi
+    args: {name: tumor}
+    verifiers:
+      - {name: stale_marked, key: "obs:roi_label"}
+final:
+  verifiers:
+    - {name: turn_status, turn: 2, status: done}

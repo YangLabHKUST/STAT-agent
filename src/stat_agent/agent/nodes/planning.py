@@ -1,0 +1,97 @@
+"""plan / ask_planner / select_step nodes."""
+
+from __future__ import annotations
+
+from langgraph.runtime import Runtime as LGRuntime
+from langgraph.types import Command
+
+from stat_agent.agent.nodes.common import answer_records, cancelled, emit_prompt, obtain_decision, phase
+from stat_agent.agent.policy import Interrupt
+from stat_agent.agent.state import Context, TurnState, answers_for, memory_of, pending_interrupt
+from stat_agent.core.view import InterfaceState
+from stat_agent.events.catalogue import PlanStepView, PlanUpdated, StepStarted, TurnCancelled
+
+
+def _plan_views(plan: list[dict], step_index: int, statuses: dict[int, str] | None = None) -> list[PlanStepView]:
+    views = []
+    for i, s in enumerate(plan):
+        status = (statuses or {}).get(i) or ("active" if i == step_index else ("done" if i < step_index else "pending"))
+        views.append(PlanStepView(step_id=f"s{i + 1}", index=i + 1, description=s.get("description", ""), status=status, target_slices=list(s.get("target_slice_ids", [])), depends_on=list(s.get("depends_on", [])), skill=s.get("skill")))
+    return views
+
+
+async def plan_node(state: TurnState, runtime: LGRuntime[Context]):
+    ctx = runtime.context
+    phase(ctx, "planning")
+    summary = ctx.summary()
+    query = state["query"]
+    interface = InterfaceState.model_validate(state["interface"]) if state.get("interface") else ctx.interface
+    if not ctx.ablation.planner:
+        result = ctx.roles.planner.single_step(query, summary)
+    else:
+        result = await ctx.roles.planner.plan(
+            query,
+            summary,
+            memory=memory_of(state, ctx) if ctx.ablation.memory else None,
+            answers=answers_for(state, "planner"),
+            interface=interface,
+            turn_id=state["turn_id"],
+        )
+    if result.needs_clarification:
+        pending = Interrupt(kind="planner", question=result.question)
+        emit_prompt(ctx, pending, None)
+        return Command(update={"pending": pending.model_dump()}, goto="ask_planner")
+    plan = [s.model_dump() for s in result.steps]
+    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="created", steps=_plan_views(plan, 0)))
+    return Command(update={"plan": plan, "step_index": 0, "pending": None}, goto="select_step")
+
+
+async def ask_planner_node(state: TurnState, runtime: LGRuntime[Context]):
+    ctx = runtime.context
+    pending = pending_interrupt(state)
+    if pending is None:
+        return Command(goto="plan")
+    phase(ctx, "waiting", "planner clarification")
+    decision, assumptions = obtain_decision(state, ctx, pending, None)
+    recs = answer_records(pending, decision, None, None)
+    return Command(update={"answers": recs, "assumptions": assumptions, "pending": None}, goto="plan")
+
+
+async def select_step_node(state: TurnState, runtime: LGRuntime[Context]):
+    ctx = runtime.context
+    if cancelled(ctx):
+        ctx.emit(TurnCancelled(partial=bool(state.get("handoffs")), ledger_version=ctx.ledger.version))
+        return Command(update={"status": "cancelled"}, goto="finish_turn")
+    plan = state.get("plan") or []
+    idx = state.get("step_index", 0)
+    if idx >= len(plan):
+        return Command(goto="finish_turn")
+    step = plan[idx]
+    step_no = idx + 1
+    step_id = f"{state['turn_id']}-s{step_no}"
+    # a step whose dependency failed is skipped explicitly
+    failed_steps = {h["step_number"] for h in state.get("handoffs", []) if not h.get("success", True)}
+    blocked_by = [d for d in step.get("depends_on", []) if d in failed_steps]
+    current = {
+        "step_id": step_id,
+        "step_number": step_no,
+        "target_slice_ids": list(step.get("target_slice_ids", [])),
+        "status": "running",
+        "mode": "guided",
+        "skill": None,
+        "contract": None,
+        "results": [],
+        "figures": [],
+        "produced": [],
+        "reads": [],
+        "text": "",
+    }
+    ctx.emit(StepStarted(step_id=step_id, index=step_no, total=len(plan), description=step.get("description", ""), target_slices=current["target_slice_ids"]))
+    ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_started", steps=_plan_views(plan, idx)))
+    if blocked_by:
+        current.update(status="skipped", mode="skipped", skip_reason=f"depends on failed step(s) {blocked_by}")
+        return Command(update={"current": current}, goto="finish_step")
+    return Command(update={"current": current}, goto="filter")
+
+
+__all__ = ["plan_node", "ask_planner_node", "select_step_node"]
