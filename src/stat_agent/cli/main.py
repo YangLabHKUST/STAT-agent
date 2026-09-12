@@ -25,6 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8889)
     web.add_argument("--jupyter-port", type=int, default=8890)
+    web.add_argument("--jupyter-root")
     web.add_argument("--debug", action="store_true")
     web.set_defaults(func=_cmd_web)
 
@@ -41,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
 def _cmd_web(args) -> int:
     from stat_agent.web.__main__ import run
 
-    return run(host=args.host, port=args.port, jupyter_port=args.jupyter_port, debug=args.debug)
+    return run(host=args.host, port=args.port, jupyter_port=args.jupyter_port, debug=args.debug, jupyter_root=args.jupyter_root)
 
 
 def _cmd_chat(args) -> int:

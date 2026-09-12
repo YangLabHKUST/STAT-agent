@@ -29,6 +29,7 @@ class WebConfig:
     host: str = "127.0.0.1"
     port: int = 8889
     jupyter_port: int = 8890
+    jupyter_root: Path | None = None  # Jupyter's notebook-dir; notebook links are made relative to it (default: the logs dir)
     debug: bool = False
     demo_mode: bool = False
     lock_timeout_s: float = 2.0

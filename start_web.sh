@@ -22,11 +22,16 @@ echo ""
 
 # cd /import/home3/yhchenmath/Code/STAT-agent
 
+# Session logs and notebooks live here; Jupyter is rooted at the same directory so notebook links resolve
+export STAT_LOGS_DIR="${STAT_LOGS_DIR:-$PWD/logs}"
+mkdir -p "${STAT_LOGS_DIR}"
+
 # Start Jupyter Lab in background (no token, no browser, allow iframe embedding)
 jupyter lab \
     --port=${JUPYTER_PORT} \
     --ip=0.0.0.0 \
     --no-browser \
+    --notebook-dir="${STAT_LOGS_DIR}" \
     --NotebookApp.token='' \
     --NotebookApp.password='' \
     --ServerApp.token='' \

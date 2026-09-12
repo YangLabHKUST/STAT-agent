@@ -120,8 +120,16 @@ async def notebook_content(request: Request):
 async def notebook_url(request: Request):
     app = state_of(request)
     agent = app.require_agent()
-    nb = agent.notebook.notebook_file if agent.notebook else None
-    return json({"success": True, "notebook_path": str(nb) if nb else None, "jupyter_port": app.config.jupyter_port, "url": f"http://localhost:{app.config.jupyter_port}/lab/tree/{Path(nb).name}" if nb else None})
+    nb = Path(agent.notebook.notebook_file) if agent.notebook else None
+    url = None
+    if nb is not None:
+        root = Path(app.config.jupyter_root or app.settings.resolved_logs_dir)
+        try:
+            rel = nb.resolve().relative_to(root.resolve())
+        except ValueError:
+            rel = Path(nb.name)
+        url = f"http://localhost:{app.config.jupyter_port}/lab/tree/{rel.as_posix()}"
+    return json({"success": True, "notebook_path": str(nb) if nb else None, "jupyter_port": app.config.jupyter_port, "url": url})
 
 
 async def export_report(request: Request):
