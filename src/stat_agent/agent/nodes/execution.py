@@ -295,20 +295,13 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                 if not delta.empty:
                     wrote_anything = True
                     ctx.emit(delta.to_event(origin="agent"))
-                    produced += [a for a in delta.entry.touched if a not in produced]
+                    produced += [a for a in delta.entry.touched + delta.entry.stale_cleared if a not in produced]  # reproduced keys are re-attributed to this step
                     new_replaced = [a for a in delta.entry.replaced_loaded if a not in replaced_loaded]
                     if new_replaced:
                         replaced_loaded += new_replaced
                         ctx.emit(WarningEvent(message="This step replaced data that came with the dataset: " + ", ".join(new_replaced) + ". The original values are no longer in memory; reload the dataset to get them back.", code="replaced_loaded"))
                 if res.access:
                     reads |= {f"{r}" for r in res.access.reads}
-            # what the code itself wrote (assignments and known library effects) also counts as produced,
-            # so an unchanged re-run passes; declared `produces` never count on their own
-            for w in step_writes:
-                for sid in current["target_slice_ids"]:
-                    qid = f"s{sid}:{w}"
-                    if qid not in produced:
-                        produced.append(qid)
             if step_writes and not ctx.ablation.provenance:
                 wrote_anything = True
 
@@ -370,8 +363,14 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
 
     all_ok = bool(results) and all(r["success"] for r in results)
     missing: list[str] = []
+    # what the code assigned (on any object, qualified per target slice) counts for the output check, so a
+    # step that did its work on a copy or reproduced identical values passes; `produced` stays the ledger's
+    # list, which is what the analyser, the handoff and the report see (declared `produces` never count)
+    claimed = list(produced) + [f"s{sid}:{w}" for w in sorted(code_writes) for sid in current["target_slice_ids"] if f"s{sid}:{w}" not in produced]
+    if not ctx.ablation.provenance:
+        produced = claimed  # no ledger to tell the two apart
     if all_ok and contract is not None and ctx.ablation.validate_result and contract.produces:
-        missing = _missing_outputs(ctx, contract, current["target_slice_ids"], produced, require_produced=ctx.ablation.provenance)
+        missing = _missing_outputs(ctx, contract, current["target_slice_ids"], claimed, require_produced=ctx.ablation.provenance)
         ctx.emit(ValidateResult(step_id=step_id, passed=not missing, failures=missing))
     # the code wrote a declared output somewhere (a pooled or subset object, say): the step did its
     # work on a derived object and is accepted; only an inspection-only step gets a continuation

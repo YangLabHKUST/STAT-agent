@@ -8,7 +8,7 @@ from starlette.routing import Route
 from stat_agent.core.lock import SessionBusy
 from stat_agent.web.errors import ApiError
 from stat_agent.web.render import roi_payload
-from stat_agent.web.routes.common import json, ledger_headers, parse_body, state_of
+from stat_agent.web.routes.common import in_thread, json, ledger_headers, parse_body, state_of, under_lock
 from stat_agent.web.schemas import ROICreate, ROIPatch
 
 
@@ -35,8 +35,7 @@ async def list_rois(request: Request):
     app = state_of(request)
     session = app.require_session()
     try:
-        with session.lock.hold("gui:roi_list", timeout=app.config.lock_timeout_s):
-            rois = [roi_payload(r) for r in session.roi_manager.rois.values()]
+        rois = await under_lock(session, "gui:roi_list", app.config.lock_timeout_s, lambda: [roi_payload(r) for r in session.roi_manager.rois.values()])
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "rois": rois, "ledger_version": app.agent.ledger.version if app.agent else 0}, headers=ledger_headers(app))
@@ -53,7 +52,7 @@ async def create_roi(request: Request):
         raise ApiError("conflict", f'ROI "{body.name}" already exists', 409)
     definition = _definition(body)
     try:
-        res = app.mutator.create_roi(body.name, slice_id, definition)
+        res = await in_thread(app.mutator.create_roi, body.name, slice_id, definition)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     except ValueError as exc:
@@ -81,7 +80,7 @@ async def delete_roi(request: Request):
     if not name or name not in session.roi_subsets:
         raise ApiError("not_found", f'ROI "{name}" not found', 404)
     try:
-        res = app.mutator.delete_roi(name)
+        res = await in_thread(app.mutator.delete_roi, name)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "provenance_update": res.event.model_dump(mode="json") if res.event else None}, headers=ledger_headers(app))
@@ -104,7 +103,7 @@ async def rename_roi(request: Request):
     if new in session.roi_subsets:
         raise ApiError("conflict", f'ROI "{new}" already exists', 409)
     try:
-        res = app.mutator.rename_roi(old, new)
+        res = await in_thread(app.mutator.rename_roi, old, new)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "provenance_update": res.event.model_dump(mode="json") if res.event else None}, headers=ledger_headers(app))

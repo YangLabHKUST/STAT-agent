@@ -51,7 +51,10 @@ checks `produces` against the code. Keys accept globs (`uns:*_nhood_enrichment`)
 
 ## 3. Body
 
-Explain the workflow, then give runnable code that uses explicit slice access:
+Explain the workflow, then give runnable code that uses explicit slice access. Code that needs a model
+of its own (naming clusters, say) reads `session.llm_config` (`provider`, `model`, `api_key`,
+`base_url`, filled by the agent) and calls `stat_agent.agent.llm_backend.LLMBackend(system_prompt=...,
+model=..., api_key=..., endpoint=...).run(prompt)`, the 0.1 surface kept on the 2.0 client:
 
 ````markdown
 ## Workflow

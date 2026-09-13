@@ -639,3 +639,41 @@ def test_failed_step_stays_failed_in_the_plan_view(registry):
         assert [s.status for s in e.steps if s.index == 1] == ["failed"], [(s.index, s.status) for s in e.steps]
     assert [s.status for s in views[-1].steps] == ["failed", "done"]
     assert [e for e in events if e.type == "step_done"][-1].status == "done"
+
+
+def test_writes_on_a_copy_are_not_reported_as_produced(registry):
+    """What the code assigned on a copy counts for the output check only; the analyser, the handoff and
+    the report see the ledger's list (B39)."""
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            return "I'll work on a copy.\n```python\ns = session.get_slice(0)\na = s.adata.copy()\na.obs['tmp_clusters'] = 'c1'\ns.adata.uns['copy_note'] = 'kept'\nprint('done')\n```"
+        if role == "analyzer":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    asyncio.run(collect(agent.run_turn("describe the data")))
+    handoff = agent.memory.turns[-1].handoffs[0]
+    assert handoff.outputs == ["s0:uns:copy_note"]
+    assert "s0:uns:copy_note" in seen[-1] and "s0:obs:tmp_clusters" not in seen[-1]
+    assert agent.ledger.get("s0:obs:tmp_clusters") is None
+
+
+def test_session_llm_config_is_set_for_skill_code(registry):
+    """Skill code written for 0.1 reads ``session.llm_config``; the agent fills it from its model spec (B41)."""
+    from tests.fixtures.sessions import make_session
+    from tests.graph.conftest import default_responder
+
+    from stat_agent.agent import Agent
+    from stat_agent.llm import LLMClient
+    from stat_agent.llm.models import make_spec
+
+    session = make_session("S1_cell_gene")
+    assert session.llm_config is None
+    Agent(session, LLMClient(spec=make_spec("openai/gpt-4o", api_key="k"), responder=default_responder), registry=registry)
+    cfg = session.llm_config
+    assert (cfg["provider"], cfg["model"], cfg["api_key"]) == ("openai", "openai/gpt-4o", "k") and set(cfg) == {"provider", "model", "api_key", "base_url"}

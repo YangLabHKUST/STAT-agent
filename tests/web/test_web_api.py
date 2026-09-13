@@ -251,3 +251,35 @@ def test_reply_body_aliases_map_to_decisions():
     assert TurnManager._to_decision(turn, {"prompt_id": "p", "answer": "brain"}).answer == "brain"
     with pytest.raises(ApiError):
         TurnManager._to_decision(turn, {"prompt_id": "p"})
+
+
+def test_waiting_for_the_session_lock_does_not_block_other_requests(client, dataset_dir):
+    """A viewer request that finds the session locked (a block is running) waits for its 409 in a worker
+    thread; the event loop keeps serving requests that take no lock (B38)."""
+    import threading
+
+    init_session(client, dataset_dir)
+    session = client.app.state.stat.session
+    held = threading.Event()
+
+    def hold():
+        with session.lock.hold("test:block"):
+            held.set()
+            time.sleep(1.2)
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    assert held.wait(2)
+    codes: list[int] = []
+    workers = [threading.Thread(target=lambda: codes.append(client.get("/api/slices/0/cells").status_code)) for _ in range(3)]
+    for w in workers:
+        w.start()
+    time.sleep(0.05)
+    t0 = time.time()
+    r = client.get("/api/meta")
+    dt = time.time() - t0
+    for w in workers:
+        w.join()
+    holder.join()
+    assert r.status_code == 200 and dt < 0.15, dt
+    assert codes == [409, 409, 409]

@@ -163,3 +163,59 @@ def test_seeded_names_survive_a_run(tmp_path):
     rt = Runtime(session=session, snapshot=False, workdir=tmp_path)
     assert rt.run("session = 'oops'\nnp = 5\nkeep = 1").success
     assert rt.namespace["session"] is session and rt.namespace["np"].__name__ == "numpy" and rt.namespace["keep"] == 1
+
+
+def test_auto_policy_answers_verifier_questions_sensibly():
+    """Auto mode answers from the skill's defaults, the conventions, a fact named in the question, or a value
+    the question itself offers; a fact keyed "slice" never answers a question that merely mentions a slice (B40)."""
+    from stat_agent.agent.policy import AutoPolicy
+
+    class _Slice:
+        tissue_name = "breast cancer"
+
+    class _Summary:
+        slices = [_Slice()]
+        slice_ids = [2]
+
+    class _Ctx:
+        skill_defaults: dict = {}
+
+        def summary(self):
+            return _Summary()
+
+    policy = AutoPolicy()
+    facts = {"slice": "Slice 2", "resolution": "0.8"}
+
+    def ask(q, defaults=None):
+        return policy._answer_question(q, _Ctx(), defaults or {}, facts)[0]
+
+    assert ask("How many spatial domains should SpaGCN detect on slice 2? (e.g., 7)") == "7"
+    assert ask("Please reply with a single integer: your target slice is already fixed as slice 2, I just need the domain count") is None
+    assert ask("Which sequencing platform was used, 'Visium' or 'ST'?") == "Visium"
+    assert ask("Which Leiden resolution should I use?") == "0.8"
+    assert ask("What is the path to the reference h5ad file?") is None
+    assert ask("What tissue type is this?") == "breast cancer"
+    assert ask("Number of neighbours (default: 15)?") == "15"
+    assert ask("How many clusters? I can default to 7 given the 12 annotated cell types") == "7"
+    assert ask("Is the user's data or the sample's data normalised?") is None
+    assert ask("How many domains?", defaults={"How many domains": "9"}) == "9"
+    assert policy._answer_question("Which species is this?", _Ctx(), {}, {"species": "mouse"})[0] == "mouse"  # a stated fact beats the convention
+    assert policy._answer_question("What is the path to the reference h5ad file?", _Ctx(), {}, {"reference h5ad": "/data/ref.h5ad"})[0] == "/data/ref.h5ad"  # a path the user gave is not invented
+
+
+def test_llm_backend_shim_runs_on_the_client():
+    """``stat_agent.agent.llm_backend.LLMBackend`` keeps the 0.1 surface skill code expects (B41)."""
+    from stat_agent.agent.llm_backend import LLMBackend
+    from stat_agent.llm import LLMClient
+
+    seen: list = []
+
+    def responder(role, messages, schema):
+        seen.append((role, [(type(m).__name__, m.content) for m in messages]))
+        return "Cluster 0: T cells"
+
+    backend = LLMBackend(system_prompt="Respond with JSON.", client=LLMClient(None, model_name="scripted", responder=responder))
+    assert asyncio.run(backend.run("name the clusters")) == "Cluster 0: T cells"
+    assert seen[0][0] == "skill" and seen[0][1] == [("SystemMessage", "Respond with JSON."), ("HumanMessage", "name the clusters")]
+    with pytest.raises(ValueError):
+        LLMBackend()

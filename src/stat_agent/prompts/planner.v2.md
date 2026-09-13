@@ -33,6 +33,7 @@ Determine which slice(s) the user wants to analyze and how to execute the query.
 - "here", "this slice", "the current one", "what I'm looking at" mean the slice named in the Interface state; when the user says they switched to or are looking at another slice, the Interface state wins over the conversation history
 - If only 1 slice exists, assume that slice
 - If ambiguous with multiple slices, ASK FOR CLARIFICATION
+- If the user's reply to your earlier question (listed above as an earlier clarification of the query) does not answer it (empty, meaningless text, unrelated, or a question back), do NOT choose an interpretation yourself: set needs_clarification again and restate the question briefly with its choices. A reply that gives the choice in other words (a slice name, "the first one", "you pick") is an answer.
 
 NOTE: If the analysis or process is asked for multiple slices, and can be performed in the same way on each slice (like using one or two replicate function), then it is better to keep it as one step.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
+from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -51,4 +52,21 @@ def ledger_headers(app) -> dict:
     return {"X-STAT-Ledger-Version": str(app.agent.ledger.version if app.agent else 0), "X-STAT-Generation": str(app.generation)}
 
 
-__all__ = ["state_of", "json", "parse_body", "slice_from", "ledger_headers", "JSONResponse"]
+async def in_thread(fn, *args, **kwargs):
+    """Run a body that may wait for the session lock in a worker thread. The runtime holds the lock
+    for the whole of a code block, so waiting for it (up to ``lock_timeout_s``) on the event loop
+    would stall every other request, the event stream and Stop."""
+    return await run_in_threadpool(fn, *args, **kwargs)
+
+
+async def under_lock(session, holder: str, timeout: float, fn, *args, **kwargs):
+    """``fn(*args, **kwargs)`` under the session lock, in a worker thread (see ``in_thread``)."""
+
+    def _locked():
+        with session.lock.hold(holder, timeout=timeout):
+            return fn(*args, **kwargs)
+
+    return await run_in_threadpool(_locked)
+
+
+__all__ = ["state_of", "json", "parse_body", "slice_from", "ledger_headers", "in_thread", "under_lock", "JSONResponse"]

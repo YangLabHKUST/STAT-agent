@@ -109,7 +109,7 @@ async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
         memory.record_turn(record)
         if memory.needs_summary and status != "cancelled":  # the summary can wait for the next turn; the user is waiting now
             try:
-                out = await ctx.roles.summarizer.summarize(memory.rolling_summary, memory.evicted_turns(), turn_id=state["turn_id"])
+                out = await ctx.roles.summarizer.summarize(memory.rolling_summary, memory.evicted_turns(), max_words=memory.summary_word_budget(), turn_id=state["turn_id"])
                 memory.apply_summary(out.summary, len(memory.turns) - memory.window_turns)
                 for f in out.facts:
                     if isinstance(f, dict) and f.get("key"):

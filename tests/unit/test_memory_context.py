@@ -72,3 +72,24 @@ def test_runtime_describe_namespace_skips_seeds_modules_and_private_names(tmp_pa
     assert rt.user_variables() == ["res", "labels"]
     assert rt.describe_namespace() == [("res", "float = 0.3"), ("labels", "list (2 items)")]
     assert rt.describe_namespace(limit=1) == [("labels", "list (2 items)")]
+
+
+def test_memory_window_facts_and_summary_word_budget():
+    """Six verbatim turns, twenty-four facts shown, and a summary word budget that grows with the turns it covers (B43)."""
+    from stat_agent.memory.state import ConversationMemory, TurnRecord
+
+    mem = ConversationMemory()
+    assert mem.window_turns == 6
+    for i in range(1, 9):
+        mem.record_turn(TurnRecord(turn_id=f"t{i}", index=i, query=f"query {i}", response_summary=f"did {i}"))
+    text = mem.history_text()
+    assert "query 3" in text and "query 2" not in text
+    assert mem.needs_summary and [t.turn_id for t in mem.evicted_turns()] == ["t1", "t2"]
+    assert mem.summary_word_budget() == 150 + 40 * 2
+    for _ in range(40):
+        mem.record_turn(TurnRecord(turn_id="tx", index=9, query="q"))
+    assert mem.summary_word_budget() == 1200
+    for k in range(30):
+        mem.add_fact(f"k{k}", str(k), "t8")
+    text = mem.history_text()
+    assert "k6: 6" in text and "k5: 5" not in text

@@ -447,6 +447,36 @@ Session directories: `~/Downloads/A0/session_20260912_122258` (turns 1 to 3), `~
 **Fix:** the scan is receiver-aware. A read counts only when its receiver can be a session slice (`session.get_slice(i).adata`, a name bound to one, a slice iterated from the session, a subset or copy of one); a read on an object built by another call (`ad.concat`, `sc.read_h5ad`) or on a namespace variable holding an AnnData that is not a slice is not a slice read; an aliased container (`obs = adata.obs; obs['celltype']`), which the scan used to miss entirely, is now followed too. Writes are unchanged (the snapshot diff decides what changed). **Status: done, tested** (`test_code_access_reads_only_count_on_session_slices`, `test_reads_on_a_pooled_object_are_not_slice_inputs`). A session started before the fix keeps its marks; "Re-run" there recomputes the Goblet markers on the pooled object still in the namespace and clears them.
 </div>
 
+<div class="bug high" markdown="1">
+**B38. Viewer requests froze the whole server while a block ran** (third review F1). Twelve request handlers took the session lock on the event-loop thread. The runtime holds that lock for the whole of a code block, so every viewer click during an analysis parked the loop for the two-second lock timeout before its 409, requests that take no lock waited behind it, the event stream stalled, and with eight clicks in flight a Stop was not even received for 16 seconds.
+**Fix:** the locked bodies of the data, ROI, cell-type, snapshot, consistency and save routes run in a worker thread (`in_thread` / `under_lock` in `web/routes/common.py`); the lock semantics are unchanged, the loop never waits. Dataset loading still runs on the loop behind its overlay. **Status: done, tested** (`test_waiting_for_the_session_lock_does_not_block_other_requests`: three viewer requests wait for their 409s while `/api/meta` answers in milliseconds); live, five viewer requests and `/api/meta` all answered within 0.4 s during a running block.
+</div>
+
+<div class="bug high" markdown="1">
+**B39. The analyser was told that writes on a copy had hit the slices** (third robustness run F2). The "artefacts written this step (from the provenance ledger)" block, the step handoff and the report listed what the code assigned on any object, qualified per target slice, so a step that clustered a copy was reported as having written PCA, neighbours and a `leiden` column onto the slice. Since B31 the ledger itself ignored those writes, so the chat confessed overwrites the Changes panel denied, and the phantom artefacts reached later recaps, a methods paragraph and the exported report.
+**Fix:** `produced` is the ledger's list only (plus keys a re-run reproduced, which the ledger re-attributes to the step); what the code assigned counts for the output check alone (`claimed`), so a step working on a copy or reproducing identical values still passes. With provenance switched off the two lists coincide as before. **Status: done, tested** (`test_writes_on_a_copy_are_not_reported_as_produced`).
+</div>
+
+<div class="bug high" markdown="1">
+**B40. Auto mode answered every verifier question with the slice** (third robustness run F5). A known fact keyed `slice` matched any question mentioning a slice, so "how many domains on slice 2? (e.g., 7)" and "'Visium' or 'ST'?" were answered "Slice 2" until the re-ask cap blocked the turn; the number rule also picked the slice number.
+**Fix:** answer order is the skill's defaults, explicit hints, the species / tissue / column conventions, a fact whose key appears as a whole word in the question (generic keys such as `slice` never answer), then a value the question itself offers (a stated default, an example, the first of the quoted options), and last a number that does not follow "slice". **Status: done, tested** (`test_auto_policy_answers_verifier_questions_sensibly`).
+</div>
+
+<div class="bug medium" markdown="1">
+**B41. The fast annotation skill could not reach a model** (third robustness run F9). Its vendored code reads `session.llm_config` and imports `stat_agent.agent.llm_backend.LLMBackend`, both 0.1 conventions that 2.0 no longer provided, so "name the groups" failed with `AttributeError` and degraded to `Cluster_0/1/2`.
+**Fix:** `SimpleSession.llm_config` (provider, model id, api key, base URL) is filled by the agent from its model spec, and `stat_agent.agent.llm_backend.LLMBackend` keeps the 0.1 surface on the 2.0 client. **Status: done, tested** (`test_session_llm_config_is_set_for_skill_code`, `test_llm_backend_shim_runs_on_the_client`) and verified live with the skill.
+</div>
+
+<div class="bug low" markdown="1">
+**B42. A meaningless reply to a planner question counted as an answer** (third robustness run F10). "zzzz qwrty" to "which of (a) or (b)?" ran option (a).
+**Fix:** a planner rule: a reply that does not answer the question (empty, meaningless, unrelated, a question back) is a reason to ask again within the existing two-re-ask cap; a reply that gives the choice in other words remains an answer. **Status: done, tested** (`test_planner_prompt_re_asks_on_a_non_answer`) and verified live.
+</div>
+
+<div class="bug medium" markdown="1">
+**B43. Long sessions forgot their first chapter** (third robustness run F4). Anything older than the four-turn window lived only in an eight-sentence rolling summary that was told to describe "what has been done"; after 46 turns it described the current state, and the first clustering's parameters, the cluster names and an early "do not overwrite celltype" instruction were merged away, so recall questions were answered wrongly and the instruction was later violated.
+**Fix:** the verbatim window is six turns and the history budget 24,000 characters; the summary's word budget grows with the turns it covers (150 words plus 40 per turn, at most 1,200) instead of a fixed sentence count; the summariser keeps superseded work marked as superseded and the user's standing instructions in their words, and records each instruction as a fact (`instruction: ...`); 24 facts are shown instead of 12. **Status: done, tested** (`test_memory_window_facts_and_summary_word_budget`, `test_summarizer_prompt_scales_with_the_turns_it_covers`); the wording of the summary itself is model-dependent and worth a look in a long live session.
+</div>
+
 ### 10b. Review items fixed (evening of 2026-09-12)
 
 The independent review's findings are numbered F1 to F50 in its own report. Fixed here, all covered by the suite (134 passed):

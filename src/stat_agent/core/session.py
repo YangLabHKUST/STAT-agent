@@ -67,6 +67,9 @@ class SimpleSession:
         self.lock = SessionLock()
         self.workdir: Path | None = Path(workdir) if workdir else None
         self.metadata: dict[str, Any] = {"created_at": datetime.now().isoformat(), "name": name}
+        # provider, model, api_key and base_url for skill code that calls a model itself (the 0.1
+        # convention: ``session.llm_config`` + ``stat_agent.agent.llm_backend.LLMBackend``); the agent fills it
+        self.llm_config: dict[str, Any] | None = None
         logger.info("Created session: %s", name)
 
     # ---- slices ----------------------------------------------------------------------

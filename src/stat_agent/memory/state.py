@@ -114,7 +114,7 @@ class ConversationMemory(BaseModel):
     rolling_summary: str = ""
     summary_covers: int = 0  # number of leading turns folded into rolling_summary
     facts: dict[str, Fact] = Field(default_factory=dict)
-    window_turns: int = 4  # verbatim window (the paper's "eight messages" = four turns)
+    window_turns: int = 6  # verbatim window (twelve messages); everything older lives in the rolling summary and the facts
 
     # ---- updates -------------------------------------------------------------------------------
     def record_turn(self, rec: TurnRecord) -> None:
@@ -137,16 +137,22 @@ class ConversationMemory(BaseModel):
         self.rolling_summary = summary
         self.summary_covers = covers
 
+    def summary_word_budget(self) -> int:
+        """Words the rolling summary may use. It grows with the turns the summary has to cover, so
+        compressing a long session adds sentences instead of dropping earlier work."""
+        covers = max(1, len(self.turns) - self.window_turns)
+        return min(1200, 150 + 40 * covers)
+
     # ---- rendering ---------------------------------------------------------------------------------
     def recent_turns(self, n: int | None = None) -> list[TurnRecord]:
         n = self.window_turns if n is None else n
         return self.turns[-n:] if n else []
 
-    def history_text(self, max_turns: int | None = None, char_budget: int = 12000) -> str:
+    def history_text(self, max_turns: int | None = None, char_budget: int = 24000) -> str:
         """Rolling summary (if any) followed by the recent turns in the STAT 0.1 format."""
         blocks: list[str] = []
         if self.facts:
-            blocks.append("**Known facts:** " + "; ".join(f"{f.key}: {f.value}" for f in list(self.facts.values())[-12:]))
+            blocks.append("**Known facts:** " + "; ".join(f"{f.key}: {f.value}" for f in list(self.facts.values())[-24:]))
         if self.rolling_summary:
             blocks.append(f"**Earlier in this session:** {self.rolling_summary}")
         for t in self.recent_turns(max_turns):

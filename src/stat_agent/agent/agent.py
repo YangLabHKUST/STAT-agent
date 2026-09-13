@@ -74,6 +74,12 @@ class Agent:
         self.session = session
         self.settings = settings or Settings.from_env()
         self.llm = LLMClient(spec=make_spec(llm)) if isinstance(llm, str) else llm
+        spec = getattr(self.llm, "spec", None)
+        if spec is not None and getattr(session, "llm_config", None) is None:
+            try:  # skill code that calls a model itself reads ``session.llm_config`` (0.1 convention)
+                session.llm_config = {"provider": spec.provider, "model": spec.id, "api_key": spec.api_key, "base_url": spec.base_url}
+            except AttributeError:
+                pass
         self.registry = registry or SkillRegistry.from_settings(self.settings)
         self.mode = mode
         self.policy = policy or make_policy(mode)

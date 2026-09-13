@@ -8,7 +8,15 @@ from starlette.routing import Route
 from stat_agent.core.lock import SessionBusy
 from stat_agent.web.errors import ApiError
 from stat_agent.web.render import expression_payload, image_payload, overlay_payload
-from stat_agent.web.routes.common import json, ledger_headers, parse_body, slice_from, state_of
+from stat_agent.web.routes.common import (
+    in_thread,
+    json,
+    ledger_headers,
+    parse_body,
+    slice_from,
+    state_of,
+    under_lock,
+)
 from stat_agent.web.schemas import CelltypeRename, ColorPatch
 
 
@@ -30,8 +38,7 @@ def _slice(request: Request):
 async def image(request: Request):
     app, session, s = _slice(request)
     try:
-        with session.lock.hold("gui:image", timeout=app.config.lock_timeout_s):
-            payload = image_payload(s)
+        payload = await under_lock(session, "gui:image", app.config.lock_timeout_s, image_payload, s)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json(payload, headers=ledger_headers(app))
@@ -41,10 +48,14 @@ async def cells(request: Request):
     app, session, s = _slice(request)
     sel = request.query_params.get("selected_celltypes")
     selected = [x.strip() for x in sel.split(",")] if sel else None
+
+    def _payload():
+        payload = overlay_payload(session, s, selected)
+        payload["versions"] = {"celltype": (app.agent.ledger.get(f"s{s.slice_id}:obs:celltype") or type("x", (), {"version": 0})).version if app.agent else 0, "ledger_version": app.agent.ledger.version if app.agent else 0}
+        return payload
+
     try:
-        with session.lock.hold("gui:cells", timeout=app.config.lock_timeout_s):
-            payload = overlay_payload(session, s, selected)
-            payload["versions"] = {"celltype": (app.agent.ledger.get(f"s{s.slice_id}:obs:celltype") or type("x", (), {"version": 0})).version if app.agent else 0, "ledger_version": app.agent.ledger.version if app.agent else 0}
+        payload = await under_lock(session, "gui:cells", app.config.lock_timeout_s, _payload)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json(payload, headers=ledger_headers(app))
@@ -62,8 +73,7 @@ async def expression(request: Request):
     if not gene:
         raise ApiError("validation", "gene is required", 400)
     try:
-        with session.lock.hold("gui:expression", timeout=app.config.lock_timeout_s):
-            payload = expression_payload(s, gene)
+        payload = await under_lock(session, "gui:expression", app.config.lock_timeout_s, expression_payload, s, gene)
     except KeyError:
         raise ApiError("not_found", f'Gene "{gene}" not found in slice {s.slice_id}', 404) from None
     except SessionBusy as exc:
@@ -75,7 +85,7 @@ async def patch_colors(request: Request):
     app, session, s = _slice(request)
     body = await parse_body(request, ColorPatch)
     try:
-        res = app.mutator.set_celltype_colors(s.slice_id, body.colors)
+        res = await in_thread(app.mutator.set_celltype_colors, s.slice_id, body.colors)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "colors": res.value, "provenance_update": res.event.model_dump(mode="json") if res.event else None}, headers=ledger_headers(app))
@@ -88,7 +98,7 @@ async def rename_celltype(request: Request):
     if not s.has_celltype():
         raise ApiError("not_found", "slice has no celltype column", 404)
     try:
-        res = app.mutator.rename_celltype(s.slice_id, old, body.new_name)
+        res = await in_thread(app.mutator.rename_celltype, s.slice_id, old, body.new_name)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "provenance_update": res.event.model_dump(mode="json") if res.event else None}, headers=ledger_headers(app))

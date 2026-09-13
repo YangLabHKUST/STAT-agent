@@ -45,7 +45,7 @@ as middleware.
 | `extras/` | optional deepagents driver with subagents and web research tools |
 | `events/` | the typed event catalogue, encoding, emitters and sinks |
 | `logging/` | notebook export and Markdown/HTML reports |
-| `web/` | Starlette app, event log, turn manager, routes, templates and static assets |
+| `web/` | Starlette app, event log, turn manager, routes, templates and static assets; routes that take the session lock wait for it in a worker thread, so a running code block never stalls the event loop |
 | `cli/` | `stat-agent` command line |
 
 ## The staged graph
@@ -107,8 +107,11 @@ name one.
 
 ## Clarification policies and ablation arms
 
-`InteractivePolicy` pauses the turn. `AutoPolicy` answers what can be defaulted (skill defaults,
-known facts, session state) and refuses what cannot (a file path is never invented); every answer
+`InteractivePolicy` pauses the turn. `AutoPolicy` answers what can be defaulted, in this order: the
+skill's defaults, explicit hints, the species / tissue / column conventions, a known fact whose key
+appears as a whole word in the question (never a generic key such as the slice), a value the question
+itself offers (a stated default, an example, the first of the options listed), and a number for a
+counting question; it refuses what cannot be defaulted (a file path is never invented). Every answer
 is recorded as an assumption event that the interface can override. `ScriptedPolicy` answers from
 regex rules for benchmarks. `AblationConfig` turns each component off (`A1` .. `A9`) and selects the
 driver (`staged` or `loop`).
@@ -136,8 +139,10 @@ and the agent are two views of one state. The event `provenance_update` carries 
 `state_changes` keys and the stale set.
 
 Memory keeps a `TurnRecord` per turn with one `StepHandoff` per step (inputs, outputs, summary,
-findings, code), a facts map, a verbatim window of recent turns and a rolling summary regenerated
-when the window overflows. Each role receives only the context it needs. Within a turn, the
+findings, code), a facts map, a verbatim window of the last six turns and a rolling summary regenerated
+when the window overflows. The summary's word budget grows with the turns it covers (150 words plus 40
+per turn, at most 1,200), it keeps superseded work marked as such and the user's standing instructions in
+their words, and those instructions also become facts (`instruction: ...`). Each role receives only the context it needs. Within a turn, the
 verifier, generator and analyser of a later step also receive the completed steps so far (summary,
 data changes, findings, artefacts, the namespace variables each step added and, within a budget,
 its code), and the generator sees a listing of the live Python namespace. That namespace is one

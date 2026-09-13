@@ -12,7 +12,7 @@ from stat_agent.core.lock import SessionBusy
 from stat_agent.events.catalogue import PROTOCOL_VERSION
 from stat_agent.events.encoding import dumps
 from stat_agent.web.errors import ApiError
-from stat_agent.web.routes.common import json, parse_body, state_of
+from stat_agent.web.routes.common import in_thread, json, parse_body, state_of, under_lock
 from stat_agent.web.routes.data import _busy
 from stat_agent.web.schemas import SessionCreate
 
@@ -54,8 +54,7 @@ async def snapshot(request: Request):
     session = app.require_session()
     agent = app.require_agent()
     try:
-        with session.lock.hold("gui:snapshot", timeout=app.config.lock_timeout_s):
-            payload = _snapshot_payload(app, session, agent)
+        payload = await under_lock(session, "gui:snapshot", app.config.lock_timeout_s, _snapshot_payload, app, session, agent)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json(payload)
@@ -85,7 +84,7 @@ async def consistency(request: Request):
     session = app.require_session()
     agent = app.require_agent()
     try:
-        digest = _consistency_digest(app, session, agent)
+        digest = await in_thread(_consistency_digest, app, session, agent)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "ledger_version": agent.ledger.version, "hash": digest, "ledger_hash": agent.ledger.consistency_hash(), "n_artifacts": len(agent.ledger.live())})
@@ -115,8 +114,7 @@ async def save_session(request: Request):
         pass
     target = body.get("dir") if isinstance(body, dict) else None
     try:
-        with app.session.lock.hold("gui:save", timeout=app.config.lock_timeout_s):
-            out = _save(app.session, agent, target)
+        out = await under_lock(app.session, "gui:save", app.config.lock_timeout_s, _save, app.session, agent, target)
     except SessionBusy as exc:
         raise _busy(exc) from exc
     return json({"success": True, "dir": str(out)})

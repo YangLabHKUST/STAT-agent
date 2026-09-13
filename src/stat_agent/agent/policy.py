@@ -57,6 +57,9 @@ class InteractivePolicy(ClarificationPolicy):
 
 
 PATH_WORDS = ("path", "file", ".h5ad", "reference dataset", "directory", "upload")
+# fact keys that name the data rather than a parameter: they appear in many questions ("... on slice 2")
+GENERIC_FACT_KEYS = {"slice", "slices", "slice_id", "dataset", "data", "sample", "section", "sections", "slide", "session"}
+STOPWORDS = {"the", "a", "an", "to", "is", "of", "it", "this", "that", "value", "and", "or", "for", "as", "in", "on", "by", "with", "if"}
 
 
 def _summary_of(ctx: Any):
@@ -73,12 +76,23 @@ class AutoPolicy(ClarificationPolicy):
         self.hints = {k.lower(): str(v) for k, v in (hints or {}).items()}
 
     def _answer_question(self, q: str, ctx: Any, defaults: dict[str, str], facts: dict[str, str]) -> tuple[str | None, str, str]:
+        """(answer, source, rationale); the answer is None when nothing sensible can be assumed.
+
+        Order: the skill's own defaults, explicit hints, a known fact whose key appears as a whole word
+        in the question (never a generic key such as "slice": a question about domains on slice 2 is not
+        a question about the slice), the species / tissue / column conventions, then a value the
+        question itself suggests (a stated default, an example, the first of the options offered), and
+        last a number for a counting question. A file path is never assumed unless the user stated it."""
         ql = q.lower()
         for key, val in defaults.items():
             if key.lower() in ql or ql in key.lower():
                 return val, "skill_default", f"skill default for '{key}'"
-        for key, val in {**facts, **self.hints}.items():
-            if key.lower() in ql:
+        for key, val in self.hints.items():
+            if key in ql:
+                return val, "hint", f"hint '{key}'"
+        for key, val in facts.items():
+            k = key.lower()
+            if k not in GENERIC_FACT_KEYS and re.search(rf"\b{re.escape(k)}\b", ql):
                 return val, "fact", f"known fact '{key}'"
         if "species" in ql:
             if "human" in ql or "mouse" in ql:
@@ -92,16 +106,23 @@ class AutoPolicy(ClarificationPolicy):
             names = [s.tissue_name for s in summary.slices] if summary else []
             if names:
                 return names[0], "session_state", "tissue name taken from the loaded slice name"
-        m = re.search(r"default:?\s*['\"]?([\w./-]+)['\"]?", q)
-        if m:
-            return m.group(1), "policy_default", "default value stated in the question"
         if "column" in ql and "celltype" in ql:
             return "celltype", "policy_default", "standard column name"
         if any(w in ql for w in PATH_WORDS):
             return None, "", "a file path cannot be assumed"
-        m = re.search(r"\b(\d+)\b", q)
-        if m and ("number" in ql or "how many" in ql):
-            return m.group(1), "policy_default", "number mentioned in the question"
+        m = re.search(r"\bdefaults?\b(?:\s+(?:to|is|of|value))?\s*:?\s*['\"]?([\w./-]+)", ql)
+        if m and m.group(1) not in STOPWORDS:
+            return m.group(1), "policy_default", "default value stated in the question"
+        m = re.search(r"\be\.g\.?,?\s*['\"]?([\w./-]+)", ql)
+        if m and m.group(1) not in STOPWORDS:
+            return m.group(1), "policy_default", "example value offered in the question"
+        options = re.findall(r"(?:^|[\s(])['\"]([^'\"]{1,40})['\"](?=[\s,?.)]|$)", q)
+        if len(options) >= 2 and " or " in ql:
+            return options[0], "policy_default", "first of the options offered"
+        if "number" in ql or "how many" in ql:
+            m = re.search(r"(?<!slice )(?<!slices )(?<!section )\b(\d+)\b", ql)
+            if m:
+                return m.group(1), "policy_default", "number mentioned in the question"
         return None, "", "no default available"
 
     def resolve(self, pending: Interrupt, ctx: Any) -> Decision | None:

@@ -97,3 +97,15 @@ def test_parse_segments_strips_every_interpret_marker():
     assert "__INTERPRET__" not in gen.text and "__INTERPRET__" not in gen.raw.replace(raw, "")
     assert all("__INTERPRET__" not in s.content for s in gen.segments)
     assert gen.interpret_instruction == "check the counts; describe the pattern" and len(gen.code_blocks) == 2
+
+
+def test_planner_prompt_re_asks_on_a_non_answer():
+    p = load_prompt("planner")
+    text = p.render(session_block="- Total slices: 2", history_block="", user_query="do the thing", clarifications_block="Q: which slice?\n   A: zzzz qwrty")
+    assert "does not answer it" in text and "set needs_clarification again" in text
+
+
+def test_summarizer_prompt_scales_with_the_turns_it_covers():
+    p = load_prompt("summarizer")
+    text = p.render(previous_summary="(none)", evicted_turns_block="**Query:** q", max_words=310)
+    assert "At most 310 words" in text and "superseded" in text and '"instruction:"' in text
