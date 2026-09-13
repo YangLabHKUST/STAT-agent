@@ -194,3 +194,100 @@ def test_reads_on_a_pooled_object_are_not_slice_inputs():
     delta = record(r4, "t3", [0])
     assert delta.entry.changed == ["s0:uns:rank_genes_groups"] and delta.entry.stale_now == []
     assert ledger.stale_ids() == []
+
+
+def test_code_access_slice_writes_need_the_slice_itself():
+    """Assignments and known library effects count as slice writes only when the receiver is the slice
+    object: ``session.get_slice(i).adata``, a name bound to one here or in an earlier block, a slice
+    iterated from the session, ``session.slices[i]``, an alias of its container. A subset, a ``.copy()``
+    or a pooled object never writes the slice, while the receiver-agnostic list keeps everything."""
+    code = (
+        "import anndata as ad, scanpy as sc\n"
+        "a = session.get_slice(0).adata\n"
+        "a.obs['direct'] = 1\n"
+        "obs = a.obs\n"
+        "obs['via_alias'] = 2\n"
+        "sub = a[a.obs['x'] < 50].copy()\n"
+        "sub.obs['on_copy'] = 3\n"
+        "sub.uns['rank_genes_groups'] = {}\n"
+        "view = a[:10]\n"
+        "view.obs['on_view'] = 4\n"
+        "pobs = sub.obs\n"
+        "pobs['on_copy_alias'] = 5\n"
+        "pooled = ad.concat([a, session.get_slice(1).adata])\n"
+        "sc.tl.leiden(pooled)\n"
+        "sc.tl.rank_genes_groups(pooled, 'leiden')\n"
+        "sc.pp.neighbors(a)\n"
+        "sc.tl.umap(adata=session.get_slice(1).adata)\n"
+        "for s in session.iter_slices():\n"
+        "    s.adata.obs['looped'] = 6\n"
+        "for sid, sl in session.slices.items():\n"
+        "    sl.adata.obs['looped_pair'] = 6\n"
+        "for c in [session.get_slice(0).adata.copy()]:\n"
+        "    c.obs['looped_copy'] = 6\n"
+        "session.slices[1].adata.uns['by_index'] = 7\n"
+        "kept.obs['from_earlier_block'] = 8\n"
+        "goblet.obs['pooled_kept'] = 9\n"
+        "unknown.obs['unknown_name'] = 10\n"
+        "def store(kept, **kw):\n"
+        "    kept.uns['via_param'] = 11\n"
+        "    inner = session.get_slice(0).adata\n"
+        "    inner.uns['in_body'] = 12\n"
+        "store(sub)\n"
+        "kept.uns['after_def'] = 13\n"
+        "inner.uns['leaked'] = 14\n"
+        "session.roi_manager.rois['t'].obs['not_a_slice'] = 15\n"
+    )
+    acc = code_access(code, derived_names={"goblet"}, slice_names={"kept"})
+    assert {"obs:on_copy", "uns:rank_genes_groups", "obs:on_view", "obs:on_copy_alias", "obs:pooled_kept", "obs:unknown_name"} <= acc.writes
+    assert acc.slice_writes == {
+        "obs:direct", "obs:via_alias", "obsp:connectivities", "obsp:distances", "uns:neighbors", "obsm:X_umap",
+        "obs:looped", "obs:looped_pair", "uns:by_index", "obs:from_earlier_block", "uns:in_body", "uns:after_def",
+    }
+    assert {"obs:looped_copy", "obs:on_copy", "obs:on_view"} & acc.slice_writes == set()
+
+
+def test_a_write_on_a_copy_does_not_clear_a_stale_mark():
+    """Fourth review F1. The ledger clears a stale flag on a key the code re-wrote with identical
+    values (a producer re-run, B25). That needs the slice's own value recomputed: the same key
+    assigned on a copy, a subset or a pooled object leaves the slice untouched, so the mark, its
+    reason and the original producer must survive; a rewrite on the slice itself, also from a loop
+    over the session's slices, still clears it."""
+    from stat_agent.agent.nodes.execution import _code_writes
+    from stat_agent.ledger.provenance import ProvenanceLedger, StepRef
+
+    session = make_session("S1_cell_gene")
+    rt = Runtime(session, timeout_s=30)
+    ledger = ProvenanceLedger()
+    ledger.initialize(take_snapshot(session))
+    aid = "s0:uns:rank_genes_groups"
+
+    def record(res, turn):
+        assert res.success, res.error
+        return ledger.record_step(res.snapshot_before, res.snapshot_after, producer=StepRef(turn_id=turn, step=1), reads=res.access.reads, writes=res.access.slice_writes, target_slice_ids=[0])
+
+    record(rt.run("a = session.get_slice(0).adata\ngroups = sorted(a.obs['celltype'].unique())\na.uns['rank_genes_groups'] = {'names': ['g1', 'g2']}\n"), "t1")
+    record(rt.run("a.obs['celltype'] = ['X'] * a.n_obs\n"), "t2")
+    assert ledger.get(aid).status == "stale" and ledger.get(aid).produced_by.turn_id == "t1"
+
+    assert "a" in rt._slice_names()  # bound to slice 0's AnnData in an earlier block
+    r3 = rt.run("sub = a[a.obs['x'] < 50].copy()\nsub.uns['rank_genes_groups'] = {'names': ['h']}\n")
+    assert "uns:rank_genes_groups" in _code_writes(r3) and r3.access.slice_writes == set()
+    d3 = record(r3, "t3")
+    assert d3.empty and d3.entry.stale_cleared == []
+    r4 = rt.run("import anndata as ad\npooled = ad.concat([a, sub], index_unique='-')\npooled.uns['rank_genes_groups'] = {'names': ['p']}\nsub.obs['leiden'] = '0'\n")
+    assert r4.success and {"pooled", "sub"} <= rt._derived_names() and r4.access.slice_writes == set()
+    d4 = record(r4, "t4")
+    assert d4.empty and ledger.stale_ids() == [aid]
+    art = ledger.get(aid)
+    assert art.status == "stale" and art.produced_by.turn_id == "t1" and "t2" in (art.stale_reason or "")
+    assert "STALE" in ledger.state_text([0])
+
+    d5 = record(rt.run("groups = sorted(a.obs['celltype'].unique())\na.uns['rank_genes_groups'] = {'names': ['g1', 'g2']}\n"), "t5")  # the slice itself, identical values
+    assert d5.entry.changed == [] and d5.entry.stale_cleared == [aid]
+    assert ledger.get(aid).status == "fresh" and ledger.get(aid).produced_by.turn_id == "t5"
+
+    record(rt.run("a.obs['celltype'] = ['Y'] * a.n_obs\n"), "t6")
+    assert ledger.stale_ids() == [aid]
+    d7 = record(rt.run("for s in session.iter_slices():\n    s.adata.uns['rank_genes_groups'] = {'names': ['g1', 'g2']}\n"), "t7")
+    assert d7.entry.stale_cleared == [aid] and ledger.stale_ids() == []

@@ -192,7 +192,9 @@ class ProvenanceLedger:
         """Record an agent run. ``reads`` are unqualified ``kind:key`` refs from the code
         scan (qualified per target slice); ``roi_reads`` are ROI names; ``declared_consumes``
         are unqualified refs from the skill contract; ``writes`` are unqualified refs the code
-        assigned. Only the snapshot diff decides what changed. A key the code assigned whose values
+        assigned on the slice itself (a write on a copy, a subset or a pooled object must not be
+        passed: it would clear a stale flag the slice still deserves). Only the snapshot diff
+        decides what changed. A key the code assigned whose values
         did not change is not a change (it is most often a write to a copy or a subset, or a
         library call with a custom key): it is never reported as updated and never marks
         dependants stale. The one thing it does is clear a stale flag on that key, so that

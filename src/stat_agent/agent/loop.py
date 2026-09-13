@@ -194,7 +194,7 @@ def build_tools(agent, ctx, guards: GuardChain, turn_id: str, pending_box: dict)
             figs.append(fid)
             ctx_emit(FigureEvent(figure_id=fid, block_id=block_id))
         if ablation.provenance and res.snapshot_before is not None and res.snapshot_after is not None:
-            delta = ledger.record_step(res.snapshot_before, res.snapshot_after, producer=StepRef(turn_id=turn_id, step=run_counter["n"], skill=skill_slug, code_hash=res.code_hash, run_id=res.run_id, mode="loop"), reads=res.access.reads if res.access else (), roi_reads=res.access.roi_names if res.access else (), writes=res.access.writes if res.access else (), target_slice_ids=res.access.slice_ids if res.access else ())
+            delta = ledger.record_step(res.snapshot_before, res.snapshot_after, producer=StepRef(turn_id=turn_id, step=run_counter["n"], skill=skill_slug, code_hash=res.code_hash, run_id=res.run_id, mode="loop"), reads=res.access.reads if res.access else (), roi_reads=res.access.roi_names if res.access else (), writes=res.access.slice_writes if res.access else (), target_slice_ids=res.access.slice_ids if res.access else ())
             if not delta.empty:
                 ctx_emit(delta.to_event(origin="agent"))
         ctx_emit(CodeBlockDone(block_id=block_id, success=res.success, error=None if res.success else ErrorView(type=res.error_type or "Error", message=res.error or ""), duration_ms=int(res.duration_s * 1000), figures=figs))

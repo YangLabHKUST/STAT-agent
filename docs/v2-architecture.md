@@ -157,7 +157,10 @@ during a step closes the step through `finish_step` so its handoff and plan stat
 snapshot diff decides what changed: a key the code assigned without changing the slice's values (a
 write to a copy or a subset, a library call with a custom key) is never reported as an update and
 never marks dependants stale; the one thing it does is clear a stale flag on that key, so a producer
-re-run that reproduces identical values counts as re-produced. The analyser is told which artefacts
+re-run that reproduces identical values counts as re-produced, and only when the write hit the slice
+itself: the code scan keeps the writes whose receiver is a slice (`session.get_slice(i).adata`, a name
+bound to one in this or an earlier block, a slice iterated from the session, an alias of its container)
+apart from writes on copies, subsets and pooled objects, which clear nothing. The analyser is told which artefacts
 of its slices are stale and which loaded artefacts the step overwrote, and a `warning` event reports
 the overwrite. The report export embeds the figures of every step. The
 session summary also lists h5ad files that sit next to the slices without being slices (a reference

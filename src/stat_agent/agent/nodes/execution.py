@@ -288,7 +288,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                     reads=res.access.reads if res.access else (),
                     roi_reads=res.access.roi_names if res.access else (),
                     declared_consumes=[a.id for a in contract.consumes] if contract else (),
-                    writes=step_writes,
+                    writes=res.access.slice_writes if res.access else (),  # only a write on the slice itself may clear a stale flag; step_writes (any object) feeds the output check
                     target_slice_ids=current["target_slice_ids"],
                     outcome="ok" if res.success else ("cancelled" if res.cancelled else "failed"),
                 )

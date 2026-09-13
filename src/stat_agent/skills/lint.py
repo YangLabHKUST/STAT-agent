@@ -147,19 +147,26 @@ class _BodyScan(ast.NodeVisitor):
     slice). A read on an object built by any other call (``ad.concat(...)``, ``sc.read_h5ad(...)``)
     or on a name listed in ``derived_names`` (the live namespace holds a non-slice AnnData under
     it, such as a pooled object kept from an earlier block) is not a read of any slice and is
-    skipped. An unknown name counts (the conservative choice). Writes stay receiver-agnostic:
-    the snapshot diff decides what changed; the write list only says what the code assigned."""
+    skipped. An unknown name counts (the conservative choice). Two write lists are kept:
+    ``writes`` is receiver-agnostic (what the code assigned on any object; the snapshot diff decides
+    what changed and the output check uses it), ``slice_writes`` holds only the assignments and the
+    known library effects whose receiver is a session slice itself, not a subset or a copy, because
+    the ledger clears a stale flag on a key the code re-wrote only when the slice's own value was
+    recomputed."""
 
-    def __init__(self, derived_names: Iterable[str] = ()) -> None:
+    def __init__(self, derived_names: Iterable[str] = (), slice_names: Iterable[str] = ()) -> None:
         self.writes: Set[str] = set()
+        self.slice_writes: Set[str] = set()  # the writes (plus library effects) whose receiver is a slice itself
         self.reads: Set[str] = set()
         self.dynamic_keys: List[int] = []
         self.calls: Set[str] = set()
         self.imports: Set[str] = set()
         self.roi_names: Set[str] = set()
-        self.slice_names: Set[str] = set()
+        self.slice_names: Set[str] = set(slice_names)  # names bound to a session slice or its AnnData
+        self.copy_names: Set[str] = set()  # slice names holding a subset or a copy: reads count, writes stay on the copy
         self.derived_names: Set[str] = set(derived_names)
         self.container_names: Dict[str, Tuple[str, Optional[str]]] = {}  # obs = adata.obs -> {'obs': ('obs', class)}
+        self.direct_containers: Set[str] = set()  # container aliases whose owner is a slice itself
 
     def _artifact(self, node: ast.AST) -> Optional[Tuple[str, Optional[str]]]:
         """Return ``(kind, key)`` for ``x.obs['key']``-like subscripts; key None if dynamic."""
@@ -208,6 +215,30 @@ class _BodyScan(ast.NodeVisitor):
             return self.container_names[node.value.id][1]
         return self._classify(node.value.value)
 
+    def _direct_slice(self, node: Optional[ast.AST]) -> bool:
+        """True when ``node`` denotes a session slice itself: a ``session.*`` call such as
+        ``session.get_slice(i)``, ``session.slices[i]``, the ``.adata`` of one of those, or a name
+        bound to one. A subset, a ``.copy()``, an object built by any other call and an unknown name
+        are not: a write on them never reaches the slice."""
+        if isinstance(node, ast.Name):
+            return node.id in self.slice_names and node.id not in self.copy_names
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "copy":
+                return False
+            dotted = _dotted(node.func) or ""
+            return dotted.startswith("session.") or dotted.endswith(".get_slice")
+        if isinstance(node, ast.Attribute):
+            return node.attr == "adata" and self._direct_slice(node.value)
+        if isinstance(node, ast.Subscript):
+            return (_dotted(node.value) or "") == "session.slices"  # session.slices[i]
+        return False
+
+    def _writes_slice(self, node: ast.Subscript) -> bool:
+        """Whether the assignment target ``x.obs['k']`` (or ``obs['k']`` through an alias) hits a slice."""
+        if isinstance(node.value, ast.Name):
+            return node.value.id in self.direct_containers
+        return self._direct_slice(node.value.value)
+
     def _bind(self, target: ast.AST, cls: Optional[str], value: Optional[ast.AST] = None) -> None:
         if isinstance(target, (ast.Tuple, ast.List)):
             for elt in target.elts:
@@ -215,12 +246,18 @@ class _BodyScan(ast.NodeVisitor):
             return
         if isinstance(target, ast.Name):
             self.slice_names.discard(target.id)
+            self.copy_names.discard(target.id)
             self.derived_names.discard(target.id)
             self.container_names.pop(target.id, None)
+            self.direct_containers.discard(target.id)
             if isinstance(value, ast.Attribute) and value.attr in ATTR_KINDS:  # obs = adata.obs
                 self.container_names[target.id] = (value.attr, self._classify(value.value))
+                if self._direct_slice(value.value):
+                    self.direct_containers.add(target.id)
             elif cls == "slice":
                 self.slice_names.add(target.id)
+                if not self._direct_slice(value):  # a subset or a copy: its values come from the slice, a write on it stays there
+                    self.copy_names.add(target.id)
             elif cls == "derived":
                 self.derived_names.add(target.id)
 
@@ -242,8 +279,28 @@ class _BodyScan(ast.NodeVisitor):
         if node.value is not None:
             self._bind(node.target, self._classify(node.value), node.value)
 
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        # a parameter shadows an outer slice name inside the body and may be bound to a copy at the
+        # call, so a write on it is not a slice write; names bound to slices inside the body stay
+        # inside it. Read attribution is untouched (reads on unknown names count anyway).
+        saved = (set(self.slice_names), set(self.copy_names), set(self.direct_containers))
+        a = node.args
+        for p in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg]:
+            if p is not None:
+                self.slice_names.discard(p.arg)
+                self.copy_names.discard(p.arg)
+                self.direct_containers.discard(p.arg)
+        self.generic_visit(node)
+        self.slice_names, self.copy_names, self.direct_containers = saved
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
     def visit_For(self, node: ast.For) -> None:
         self._bind(node.target, self._classify(node.iter))
+        if self._direct_slice(node.iter):  # for s in session.iter_slices(); for sid, s in session.slices.items()
+            for n in ast.walk(node.target):
+                if isinstance(n, ast.Name):
+                    self.copy_names.discard(n.id)
         self.generic_visit(node)
 
     def _record_write(self, target: ast.AST) -> None:
@@ -258,6 +315,8 @@ class _BodyScan(ast.NodeVisitor):
                 self.dynamic_keys.append(getattr(target, "lineno", 0))
             else:
                 self.writes.add(f"{kind}:{key}")
+                if self._writes_slice(target):
+                    self.slice_writes.add(f"{kind}:{key}")
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
         art = self._artifact(node)
@@ -297,6 +356,11 @@ class _BodyScan(ast.NodeVisitor):
             if name.endswith("get_roi") or name.endswith("create_roi"):
                 if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
                     self.roi_names.add(node.args[0].value)
+            effects = LIBRARY_EFFECTS.get(name, [])
+            if effects:  # sc.tl.leiden(x) writes obs:leiden on the object it is given
+                target = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "adata"), None)
+                if target is not None and self._direct_slice(target):
+                    self.slice_writes.update(e for e in effects if "*" not in e)
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
@@ -308,8 +372,8 @@ class _BodyScan(ast.NodeVisitor):
             self.imports.add(node.module.split(".")[0])
 
 
-def scan_code(code: str, derived_names: Iterable[str] = ()) -> _BodyScan:
-    scan = _BodyScan(derived_names)
+def scan_code(code: str, derived_names: Iterable[str] = (), slice_names: Iterable[str] = ()) -> _BodyScan:
+    scan = _BodyScan(derived_names, slice_names)
     scan.visit(ast.parse(code))
     return scan
 

@@ -251,6 +251,14 @@ class Runtime:
         slice_adatas = {id(s.adata) for s in self.session.slices.values()}
         return {n for n, v in self.namespace.items() if n not in SEEDED_NAMES and isinstance(v, ad.AnnData) and id(v) not in slice_adatas}
 
+    def _slice_names(self) -> set[str]:
+        """Namespace variables holding a session slice or its AnnData (``adata = session.get_slice(0).adata``
+        kept from an earlier block): a write on one of them is a write on that slice."""
+        from stat_agent.core.data_slice import DataSlice
+
+        slice_adatas = {id(s.adata) for s in self.session.slices.values()}
+        return {n for n, v in self.namespace.items() if n not in SEEDED_NAMES and (isinstance(v, DataSlice) or id(v) in slice_adatas)}
+
     def describe_namespace(self, limit: int = 40) -> list[tuple[str, str]]:
         """(name, description) for the last `limit` user variables; what the generator is shown."""
         return [(n, describe_value(self.namespace[n])) for n in self.user_variables()[-limit:]]
@@ -287,7 +295,7 @@ class Runtime:
         run_id = uuid.uuid4().hex[:8]
         code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
         result = RunResult(run_id=run_id, success=False, code=code, code_hash=code_hash)
-        result.access = code_access(code, self._derived_names())
+        result.access = code_access(code, self._derived_names(), self._slice_names())
         if not code:
             result.error, result.error_type, result.refused = "Empty code provided", "EmptyCode", True
             return result

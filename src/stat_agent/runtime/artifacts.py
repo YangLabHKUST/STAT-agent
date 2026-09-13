@@ -12,7 +12,8 @@ from stat_agent.skills.lint import scan_code
 @dataclass
 class CodeAccess:
     reads: set[str] = field(default_factory=set)  # 'obs:celltype'
-    writes: set[str] = field(default_factory=set)
+    writes: set[str] = field(default_factory=set)  # assigned on any object
+    slice_writes: set[str] = field(default_factory=set)  # assigned (or produced by a known library call) on a slice itself
     roi_names: set[str] = field(default_factory=set)
     slice_ids: set[int] = field(default_factory=set)
     calls: set[str] = field(default_factory=set)
@@ -25,6 +26,7 @@ class CodeAccess:
         return {
             "reads": sorted(self.reads),
             "writes": sorted(self.writes),
+            "slice_writes": sorted(self.slice_writes),
             "roi_names": sorted(self.roi_names),
             "slice_ids": sorted(self.slice_ids),
             "imports": sorted(self.imports),
@@ -54,16 +56,19 @@ class _SliceAndPathScan(ast.NodeVisitor):
             self.paths.append(node.value)
 
 
-def code_access(code: str, derived_names: Iterable[str] = ()) -> CodeAccess:
+def code_access(code: str, derived_names: Iterable[str] = (), slice_names: Iterable[str] = ()) -> CodeAccess:
     """Static access scan of one block. ``derived_names`` are namespace variables known to hold an
-    AnnData that is not a session slice; reads on them are not slice reads (see ``_BodyScan``)."""
+    AnnData that is not a session slice (reads on them are not slice reads); ``slice_names`` are
+    variables known to hold a session slice or its AnnData (writes on them are slice writes). See
+    ``_BodyScan``."""
     acc = CodeAccess()
     try:
-        scan = scan_code(code, derived_names)
+        scan = scan_code(code, derived_names, slice_names)
     except SyntaxError as exc:
         acc.parse_error = f"{exc.msg} (line {exc.lineno})"
         return acc
     acc.reads, acc.writes, acc.roi_names = set(scan.reads), set(scan.writes), set(scan.roi_names)
+    acc.slice_writes = set(scan.slice_writes)
     acc.calls, acc.imports, acc.dynamic_keys = set(scan.calls), set(scan.imports), len(scan.dynamic_keys)
     extra = _SliceAndPathScan()
     extra.visit(ast.parse(code))
