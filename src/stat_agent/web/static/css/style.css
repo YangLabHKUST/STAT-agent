@@ -1959,6 +1959,10 @@ h4.chat-heading, h5.chat-heading, h6.chat-heading { font-size: 0.95em; }
 .reply-line { color: var(--text-secondary, #666); font-style: italic; margin: 6px 0; }
 .plan-step.failed .plan-step-num { background: #fde2e1; color: #8a1f1f; }
 .plan-step.blocked .plan-step-num { background: #fff1d6; color: #7a4b00; }
+@media (max-width: 1200px) {
+  .main-layout { grid-template-columns: minmax(300px, 1fr) 3px 220px 3px minmax(300px, 40%); }
+  .viewer-toolbar { flex-wrap: wrap; height: auto; min-height: 34px; row-gap: 2px; }
+}
 .plan-step.skipped .plan-step-num, .plan-step.cancelled .plan-step-num { background: var(--bg-muted); color: var(--text-secondary); text-decoration: line-through; }
 .changes-drawer { position: fixed; top: 0; right: -420px; width: 400px; height: 100vh; background: #fff; border-left: 1px solid var(--border, #ccc); box-shadow: -2px 0 8px rgba(0,0,0,0.08); transition: right 0.2s ease; z-index: 50; display: flex; flex-direction: column; }
 .changes-drawer.open { right: 0; }

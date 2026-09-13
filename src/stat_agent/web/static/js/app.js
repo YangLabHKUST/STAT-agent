@@ -145,6 +145,10 @@
     updateModalityToggle();
     updateVizModeState();
     setupResizeObserver();
+    // history first (sets stream.lastSeq), then the live stream continues from that seq: nothing renders
+    // twice; both before the slice data, whose requests wait on the session lock while a block runs
+    await restoreChatHistory();
+    openEventStream();
     await loadSliceData(state.currentSliceId, state.currentModality);
     updateCelltypeCheckboxes();
     updateDataInfo();
@@ -152,9 +156,6 @@
     api.getGeneList(state.currentSliceId).then(r => { if (r.success) state.geneList = r.genes || []; });
     refreshROIs();
     loadSkillList();
-    // history first (sets stream.lastSeq), then the live stream continues from that seq: nothing renders twice
-    await restoreChatHistory();
-    openEventStream();
     setTimeout(preloadAllSlices, 500);
   }
 
@@ -200,8 +201,10 @@
     closeEventStream();
     stream.lastSeq = 0; stream.generation = null; stream.seen = new Set();
     turnUI.turnId = null; turnUI.body = null; turnUI.pendingPrompt = null;
-    // Call backend reset to clear memory/session
-    try { await api.resetSession(); } catch (_) {}
+    stopStatusTimer(); setStatus('', 'idle'); state.chatStreaming = false;
+    state.stale = new Set();
+    // Call backend reset to clear memory/session (force: a running turn is stopped, not left running)
+    try { await api.resetSession(true); } catch (_) {}
 
     // Reset state
     state.initialized = false;
@@ -434,7 +437,7 @@
     // Ordered lists
     html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
     // Links
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => safeLink(label, url));
     // Horizontal rules
     html = html.replace(/^---$/gm, '<hr>');
     // Paragraphs (double newline → break)
@@ -745,7 +748,13 @@
   function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  // markdown links: only web and mail URLs, never an unescaped quote inside the attribute
+  function safeLink(label, url) {
+    const u = String(url).trim();
+    if (!/^(https?:|mailto:)/i.test(u)) return label;
+    return `<a href="${u.replace(/"/g, '&quot;')}" target="_blank" rel="noopener">${label}</a>`;
   }
 
   function expressionToColor(value, min, max) {
@@ -789,8 +798,8 @@
       return res.json();
     },
 
-    async resetSession() {
-      const res = await fetch('/api/session/reset', { method: 'POST' });
+    async resetSession(force) {
+      const res = await fetch('/api/session/reset' + (force ? '?force=1' : ''), { method: 'POST' });
       return res.json();
     },
 
@@ -1673,7 +1682,7 @@
       updateChatButtons();
     });
     es.addEventListener('ping', () => { stream.lastFrameAt = Date.now(); });
-    es.addEventListener('resync', () => { resyncFromSnapshot(); });
+    es.addEventListener('resync', () => { scheduleResync(); });
     for (const t of EVENT_TYPES) {
       es.addEventListener(t, (e) => {
         stream.lastFrameAt = Date.now();
@@ -1717,7 +1726,15 @@
     if (el) el.classList.add('hidden');
   }
 
+  // a resync replays everything from the snapshot: run at most one at a time and coalesce bursts
+  const resyncState = { timer: null, running: false, again: false };
+  function scheduleResync() {
+    if (resyncState.timer) return;
+    resyncState.timer = setTimeout(() => { resyncState.timer = null; resyncFromSnapshot(); }, 300);
+  }
   async function resyncFromSnapshot() {
+    if (resyncState.running) { resyncState.again = true; return; }
+    resyncState.running = true;
     try {
       const snap = await api.getSnapshot();
       if (!snap.success) return;
@@ -1728,10 +1745,15 @@
       updateStaleInfo();
       chatEl().innerHTML = '';
       stream.seen = new Set();
+      changes.length = 0; assumptions.length = 0;  // the replay below rebuilds the Changes drawer
       turnUI.turnId = null; turnUI.body = null; turnUI.streamEl = null; turnUI.planEl = null; turnUI.execOutputEl = null;
       await restoreChatHistory();
       stream.lastSeq = Math.max(stream.lastSeq, snap.last_seq || 0);
     } catch (e) { console.warn('resync failed', e); }
+    finally {
+      resyncState.running = false;
+      if (resyncState.again) { resyncState.again = false; scheduleResync(); }
+    }
   }
 
   // ---- turn lifecycle ---------------------------------------------------------
@@ -1778,6 +1800,7 @@
     const pending = turnUI.pendingPrompt;
     if (!pending || !turnUI.turnId) return;
     const body = Object.assign({ prompt_id: pending.prompt_id }, decision);
+    turnUI.pendingPrompt = null;  // one reply per prompt: a second Enter must not race this one
     state.chatStreaming = true;
     updateChatButtons();
     try {
@@ -1785,17 +1808,21 @@
       if (!res.success) {
         const msg = (res.error && res.error.message) || 'Reply refused';
         appendSystemNotice(msg, 'error');
-        if (res.error && res.error.code === 'no_pending_prompt') { turnUI.pendingPrompt = null; state.chatStreaming = false; updateChatButtons(); }
+        const code = res.error && res.error.code;
+        if (code === 'validation' || code === 'prompt_mismatch') { turnUI.pendingPrompt = pending; state.chatStreaming = false; updateChatButtons(); }
+        // no_pending_prompt: the turn moved on by itself; its own events set the buttons
       }
     } catch (err) {
+      turnUI.pendingPrompt = pending; state.chatStreaming = false; updateChatButtons();
       appendSystemNotice('Connection error: ' + err.message, 'error');
     }
   }
 
   async function abortTurn() {
     if (!turnUI.turnId) return;
-    try { await api.cancelTurn(turnUI.turnId); } catch (_) {}
-    setStatus('Stopping...', 'cancelling');
+    const id = turnUI.turnId;
+    setStatus('Stopping...', 'cancelling');  // before the request: a waiting turn closes synchronously and sets idle
+    try { await api.cancelTurn(id); } catch (_) {}
   }
 
   // ---- the reducer -------------------------------------------------------------
@@ -1998,6 +2025,7 @@
 
   function finishTurn(ev, replay) {
     turnUI.pendingPrompt = null;
+    if (turnUI.body) turnUI.body.querySelectorAll('.clarification-ui:not(.answered) button, .clarification-ui:not(.answered) input').forEach(b => { b.disabled = true; });
     stopStatusTimer();
     setStatus('', 'idle');
     if (!replay) {
@@ -2222,7 +2250,7 @@
     html = html.replace(/(^|\n)---+(\n|$)/g, '$1<hr class="chat-hr">$2');
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => safeLink(label, url));
     html = html.replace(/((?:^|\n)\|.+\|(?:\n\|.+\|)+)/g, function(tableBlock) {
       const rows = tableBlock.trim().split('\n').filter(r => r.trim());
       if (rows.length < 2) return tableBlock;
@@ -3288,7 +3316,7 @@
       try {
         const res = await api.getNotebookURL();
         if (res.success) {
-          window.open(`http://localhost:${res.jupyter_port}`, '_blank');
+          window.open(res.url || `http://localhost:${res.jupyter_port}`, '_blank');
         } else {
           alert(errText(res.error, 'Notebook not available'));
         }

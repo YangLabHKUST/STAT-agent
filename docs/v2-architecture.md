@@ -101,6 +101,9 @@ a `SKILL.md` draft that can be installed into the user skills directory.
 
 The matcher returns no match for a request that names a method no skill implements, so the
 method-card route handles it; the generator is asked to state a substitution in its first sentence.
+A request that names a skill which is installed but switched off gets advice to enable it instead of
+a provisional re-implementation, and the method card names a method only when the user's own words
+name one.
 
 ## Clarification policies and ablation arms
 
@@ -142,6 +145,12 @@ stayed open), the known facts and the clarification answers of the last two turn
 sees as answers already given. The planner receives the same artefact block as the generator, with
 its STALE marks, so a direct answer about earlier results knows what a later change invalidated.
 Artefacts written by a run that failed or was stopped are recorded as stale, never fresh, and a stop
-during a step closes the step through `finish_step` so its handoff and plan status survive. The
+during a step closes the step through `finish_step` so its handoff and plan status survive. Only the
+snapshot diff decides what changed: a key the code assigned without changing the slice's values (a
+write to a copy or a subset, a library call with a custom key) is never reported as an update and
+never marks dependants stale; the one thing it does is clear a stale flag on that key, so a producer
+re-run that reproduces identical values counts as re-produced. The analyser is told which artefacts
+of its slices are stale and which loaded artefacts the step overwrote, and a `warning` event reports
+the overwrite. The report export embeds the figures of every step. The
 session summary also lists h5ad files that sit next to the slices without being slices (a reference
 dataset), so a prerequisite can be satisfied from them.

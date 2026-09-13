@@ -84,12 +84,18 @@ class AnalyzerRole(Role):
         produced: list[str] = (),
         incomplete: list[str] = (),
         turn_steps: str = "",
+        stale: list[str] = (),
+        replaced_loaded: list[str] = (),
         turn_id: str | None = None,
         step: int | None = None,
     ) -> Analysis:
         context = assemble_context(segments, results)
         if produced:
             context += "\n**Artefacts written this step (from the provenance ledger, the ground truth for data_changes):** " + ", ".join(produced) + "\n"
+        if replaced_loaded:
+            context += "\n**This step overwrote data that came with the dataset:** " + ", ".join(replaced_loaded) + ". Say so plainly in response_summary and data_changes; the original values are no longer in memory.\n"
+        if stale:
+            context += "\n**Artefacts on the target slices currently marked STALE (an input changed after they were computed; results derived from them are not valid until recomputed):** " + ", ".join(stale) + ". Never describe a stale artefact or anything built on it as valid or unchanged.\n"
         if incomplete:
             context += "\n**Note:** the code ran without errors, but the step's declared outputs were not produced: " + "; ".join(incomplete) + "\n"
         variables = {

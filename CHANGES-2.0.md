@@ -411,6 +411,37 @@ Session directories: `~/Downloads/A0/session_20260912_122258` (turns 1 to 3), `~
 **Fix:** matcher prompt v2 returns no match for a request naming a method the skill does not implement, and the generator's notes ask it to state a substitution in the first sentence; the session summary lists h5ad files next to the slices with their full paths and the verifier and generator session blocks show them. **Status: done, tested** (`test_matcher_prompt_declines_named_methods_the_skill_does_not_implement`, `test_extra_files_next_to_the_dataset_are_listed`).
 </div>
 
+<div class="bug high" markdown="1">
+**B31. Phantom changes and contradictory validity answers** (second live-user run, 2026-09-13, t0011/t0017/t0026 and t0017 to t0019). Code that wrote a same-named key on a copy, or ran Leiden with a custom key, made the ledger report the slice's own `obs:leiden` as updated and marked the annotation, DE and GO results stale; three consecutive answers then contradicted each other about validity, because the analyser and summariser never saw the stale set.
+**Root cause:** the code scanner cannot see which object a write targets and the library-effects table maps every Leiden call to `obs:leiden`; the "re-written unchanged artefact counts as re-produced" rule turned that into a change with staleness propagation. The analyser had no stale input.
+**Fix:** only the snapshot diff decides what changed; an unchanged key the code assigned is never an update and never a staleness root, and only clears a stale flag on that key (a producer re-run with identical values). The analyser receives the stale artefacts of its slices with the instruction never to call them valid. **Status: done, tested** (`test_unchanged_write_is_not_a_change_but_reproduces_a_stale_key`, `test_analyser_sees_stale_artefacts_of_its_slices`).
+</div>
+
+<div class="bug high" markdown="1">
+**B32. Wrong slice, invented method, silent overwrite** (t0020, t0009, t0039). "Here" and "this slice" were planned on another slice than the interface showed; "annotate those clusters" on spot data made the method-card role invent a named method requiring an API key; in auto mode RCTD replaced the dataset's own cell types and weights without saying so.
+**Fix:** planner rule that "here" means the interface slice and that the interface wins when the user says they switched; the card names a method only when the user's own words name one and never invents an API-key requirement; the generator is told never to overwrite data that came with the dataset unless asked; the ledger records which loaded artefacts a run replaced, a `warning` event reports it and the analyser must state it. **Status: done, tested** (`test_step_that_overwrites_loaded_data_is_flagged`; prompt rules).
+</div>
+
+<div class="bug medium" markdown="1">
+**B33. Disabled skills, plot narration, counts without numbers, figures missing from the report, summariser after Stop** (t0028, t0006/t0021/t0032, t0004/t0012, export, t0031). A request naming cell2location, installed but switched off, ran a 13-minute provisional re-implementation; plot questions came back with textbook narration; a count question's answer summarised the table instead of giving it; the report export had no figures; after Stop the summariser still ran for 43 seconds; a recap credited a skill that was selected but never ran.
+**Fix:** a request naming an installed but disabled skill gets advice to enable it; analyser rules that it cannot see figures and that a factual answer must carry the printed values; the report embeds every step's figures (Markdown links, base64 in HTML); no summariser call on a cancelled turn; history lines say "not run" for a skill that did not run. **Status: done, tested** (`test_request_naming_a_disabled_skill_gets_advice`, `test_report_embeds_figures`, `test_no_summariser_call_after_a_stop`).
+</div>
+
+<div class="bug high" markdown="1">
+**B34. Resync storm and script injection in the page** (interface review U1, U2). A block printing 3,000 lines produced 473 resync frames and 947 extra requests and could lose the transcript; a markdown link in model text and an ROI name with a quote both ran an event handler, and the ROI became undeletable.
+**Fix:** output lines are batched (one event per ~100 ms or 50 lines, in order), the event log sends one resync per overflow episode, and the page runs one resync at a time with a 300 ms coalescing delay and resets the Changes drawer state before the replay; the HTML escaper escapes quotes and markdown links are limited to http, https and mailto. **Verified in the browser** with the reviewer's own scripts: 3,000 lines gave 60 output events and no resync; the crafted links render as text; the quoted ROI name renders escaped and deletes. **Status: done, tested** (`test_output_lines_are_batched_in_order`, `test_event_log_queue_overflow_adds_one_resync_sentinel`).
+</div>
+
+<div class="bug medium" markdown="1">
+**B35. Session lifecycle in the page** (U3, U4, U5, U6). Loading a dataset from one tab left another tab on a dead event log showing a turn as running forever; a mistyped dataset path destroyed the live session before failing; Logout during a turn was refused by the server, ignored by the page, and left the turn running; after a reload mid-turn the chat stayed empty and idle for six seconds.
+**Fix:** a new session publishes `session_reset` on the old log before swapping it (the other tab reloads); the dataset directory or saved session is validated before the teardown (404 with the session intact); Logout forces the reset, stops its status timer and clears stale badges; the history and the event stream are restored before the slice data, whose requests wait on the session lock. **Verified in the browser**: the second tab reloads within a second, the bad path leaves the session alive, the server session and turn are gone after Logout, and the chat shows the running turn one second after a reload. **Status: done, tested** (`test_bad_dataset_path_keeps_the_live_session`, `test_new_session_tells_the_old_event_log`).
+</div>
+
+<div class="bug low" markdown="1">
+**B36. Small interface defects** (U7, U8, U9, M10, notebook link). The status line stuck on "Stopping" after cancelling a waiting turn; the cancelled prompt card kept an enabled Submit; at 1024 by 700 the viewer collapsed to a 158 pixel sliver with a clipped toolbar; a double Enter on an answer sent a second reply and reset the chat state mid-turn; the notebook button opened the Jupyter root.
+**Fix:** the status is set before the cancel request; a finished turn disables its open prompt cards; below 1200 pixels the viewer keeps at least 300 pixels and the toolbar wraps; one reply per prompt with the prompt restored only on a validation or mismatch error; the notebook button opens the notebook URL. **Verified in the browser** with the reviewer's scripts (idle status after cancel, no enabled dead card, one reply request on a double Enter, 388 pixel viewer and unclipped toolbar at 1024 by 700). **Status: done.**
+</div>
+
 ### 10b. Review items fixed (evening of 2026-09-12)
 
 The independent review's findings are numbered F1 to F50 in its own report. Fixed here, all covered by the suite (134 passed):

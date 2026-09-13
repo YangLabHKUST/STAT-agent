@@ -30,6 +30,7 @@ Determine which slice(s) the user wants to analyze and how to execute the query.
 - Keywords like "both", "all", "each" (may need separate steps)
 - Keywords like "compare", "between" (single cross-slice step)
 - Multiple analytical actions in one query — chained with "then", "after that", "and then", "first ... then ...", a numbered list, or distinct verbs (e.g., "annotate celltype and find SVGs"). Split into separate steps even on a single slice; one step per analytical action. (Note: if the actions are clearly meant to be done together / small workload, can keep in one step")
+- "here", "this slice", "the current one", "what I'm looking at" mean the slice named in the Interface state; when the user says they switched to or are looking at another slice, the Interface state wins over the conversation history
 - If only 1 slice exists, assume that slice
 - If ambiguous with multiple slices, ASK FOR CLARIFICATION
 

@@ -44,6 +44,15 @@ The web layer exposes one ordered event log per session. The browser opens a sin
 6. Every event carries `step`, the plan step number, from `step_started` to `step_done` (null for
    turn-level events). `plan_updated` step statuses are `pending | active | done | failed | blocked |
    skipped | cancelled`; `step_done.status` uses the same words without `pending` and `active`.
+7. `exec_output` carries a batch of lines (one event per ~100 ms or 50 lines, in order), so a
+   verbose block cannot overflow a subscriber queue; when a queue does overflow, the log sends one
+   `resync` per overflow episode and the page replays from the snapshot once, coalescing bursts.
+8. `warning {code: "replaced_loaded"}` is emitted when a step overwrote an artefact that came with
+   the dataset (for example `obs:celltype`); the analyser is told the same and says so in its summary.
+9. Loading a dataset or a saved session publishes `session_reset` on the previous event log first,
+   so a page still attached to it reloads instead of listening to a dead log; a dataset directory
+   without `.h5ad` files, or a saved session without `manifest.json`, is refused with `404` before
+   the live session is touched. A stopped turn runs no summariser call.
 
 Other events: `method_card`, `unguarded_mode`, `refusal`, `validate_result`,
 `draft_offer` (out-of-registry path), `advice`, `warning`, `error`,

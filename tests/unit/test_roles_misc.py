@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from tests.fixtures.sessions import make_session
 
@@ -89,6 +91,69 @@ def test_matcher_prompt_declines_named_methods_the_skill_does_not_implement():
 
     p = load_prompt("matcher")
     assert p.version == 2 and "names a specific method, tool or package" in p.body
+
+
+def test_unchanged_write_is_not_a_change_but_reproduces_a_stale_key():
+    """A key the code assigned without changing values (a write to a copy, a library call with a custom
+    key) is never an update and never invalidates dependants; it only clears a stale flag on that key."""
+    from stat_agent.ledger.provenance import ProvenanceLedger, StepRef
+    from stat_agent.runtime.snapshot import take_snapshot
+
+    session = make_session("S1_cell_gene")
+    ledger = ProvenanceLedger()
+    ledger.initialize(take_snapshot(session))
+    # a dependant of celltype
+    before = take_snapshot(session)
+    session.get_slice(0).adata.obs["niche"] = "n1"
+    ledger.record_step(before, take_snapshot(session), producer=StepRef(turn_id="t1", step=1), reads=["obs:celltype"], writes=["obs:niche"], target_slice_ids=[0])
+    assert ledger.get("s0:obs:niche").inputs == ["s0:obs:celltype"]
+    version = ledger.version
+    # code writes celltype on a copy: nothing on the slice changed
+    before = take_snapshot(session)
+    delta = ledger.record_step(before, take_snapshot(session), producer=StepRef(turn_id="t2", step=1), writes=["obs:celltype"], target_slice_ids=[0])
+    assert delta.empty and ledger.version == version and not delta.entry.changed and not delta.entry.stale_now
+    assert ledger.get("s0:obs:niche").status == "fresh" and ledger.get("s0:obs:celltype").produced_by is None
+    # a stale key reproduced with identical values by a successful run is fresh again and attributed
+    ledger.mark_stale("s0:obs:celltype", "test")
+    assert ledger.get("s0:obs:niche").status == "stale"
+    before = take_snapshot(session)
+    delta = ledger.record_step(before, take_snapshot(session), producer=StepRef(turn_id="t3", step=1), writes=["obs:celltype"], target_slice_ids=[0])
+    assert "s0:obs:celltype" in delta.entry.stale_cleared and ledger.get("s0:obs:celltype").status == "fresh"
+    assert ledger.get("s0:obs:celltype").produced_by.turn_id == "t3" and ledger.get("s0:obs:niche").status == "stale"  # the dependant still needs its own re-run
+    # a failed run does not reproduce anything
+    ledger.mark_stale("s0:obs:celltype", "test")
+    before = take_snapshot(session)
+    ledger.record_step(before, take_snapshot(session), producer=StepRef(turn_id="t4", step=1), writes=["obs:celltype"], target_slice_ids=[0], outcome="failed")
+    assert ledger.get("s0:obs:celltype").status == "stale"
+
+
+def test_report_embeds_figures(tmp_path):
+    from tests.graph.conftest import SKILLS_MINI, collect, make_agent
+
+    from stat_agent.logging.report import render_report
+    from stat_agent.skills import SkillRegistry
+
+    reg = SkillRegistry([(SKILLS_MINI, "test")])
+    reg.load()
+    agent = make_agent(reg, kind="S1_cell_gene", mode="auto")
+    asyncio.run(collect(agent.run_turn("describe the data")))
+    agent.figures["t0001-s1-b1-a1-f1"] = b"\x89PNG fake"
+    md = render_report(agent, agent.session, "md")
+    assert "![figure t0001-s1-b1-a1-f1](figures/t0001-s1-b1-a1-f1.png)" in md
+    html = render_report(agent, agent.session, "html")
+    assert "data:image/png;base64," in html and "<figure>" in html
+
+
+def test_event_log_queue_overflow_adds_one_resync_sentinel():
+    import asyncio as aio
+
+    from stat_agent.web.events import EventLog
+
+    q: aio.Queue = aio.Queue(maxsize=2)
+    for i in range(6):
+        EventLog._put(q, (i, "exec_output", "{}"))
+    items = list(q._queue)
+    assert sum(1 for it in items if it[0] == "resync") == 1 and len(items) == 2
 
 
 def test_seeded_names_survive_a_run(tmp_path):

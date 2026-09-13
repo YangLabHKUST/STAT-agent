@@ -87,6 +87,21 @@ def test_turn_prompt_reply_and_replay(client, dataset_dir):
     assert "s0:obs:celltype" in snapshot["ledger"]["artifacts"]
 
 
+def test_bad_dataset_path_keeps_the_live_session(client, dataset_dir):
+    init_session(client, dataset_dir)
+    r = client.post("/api/session", json={"dataset_dir": "/nope/nope"})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+    assert client.get("/api/session/summary").status_code == 200
+
+
+def test_new_session_tells_the_old_event_log(client, dataset_dir):
+    init_session(client, dataset_dir)
+    old = client.app.state.stat.events
+    init_session(client, dataset_dir)
+    assert client.app.state.stat.events is not old
+    assert any(t == "session_reset" for _, t, _ in old.replay(0))
+
+
 def test_sse_stream_replays_frames(client, dataset_dir):
     init_session(client, dataset_dir)
     client.post("/api/rois", json={"name": "r1", "slice_id": 0, "type": "bbox", "params": {"min_x": 0, "min_y": 0, "max_x": 50, "max_y": 50}})

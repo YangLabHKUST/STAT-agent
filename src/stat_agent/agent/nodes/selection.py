@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from langgraph.runtime import Runtime as LGRuntime
 from langgraph.types import Command
@@ -69,12 +70,12 @@ async def match_node(state: TurnState, runtime: LGRuntime[Context]):
     if not ctx.ablation.matcher:
         current["matched"] = []
         ctx.emit(MatchComplete(step_id=current["step_id"], matched=[], reason="matcher disabled"))
-        return _no_skill(ctx, current, step)
+        return _no_skill(ctx, current, step, state["query"])
     catalog = ctx.registry.catalog(current.get("compatible", []))
     if not catalog:
         current["matched"] = []
         ctx.emit(MatchComplete(step_id=current["step_id"], matched=[], reason="no compatible skills"))
-        return _no_skill(ctx, current, step)
+        return _no_skill(ctx, current, step, state["query"])
     res = await ctx.roles.matcher.match(step.get("refined_query", state["query"]), catalog, top_k=ctx.settings.matcher_top_k, turn_id=state["turn_id"], step=current["step_number"])
     current["matched"] = res.selected
     ctx.emit(MatchComplete(step_id=current["step_id"], matched=res.selected))
@@ -87,12 +88,35 @@ async def match_node(state: TurnState, runtime: LGRuntime[Context]):
         pending = Interrupt(kind="skill_selection", step=current["step_number"], question="Multiple methods match your request. Which one should I use?", options=options)
         emit_prompt(ctx, pending, current["step_id"])
         return Command(update={"current": current, "pending": pending.model_dump()}, goto="ask_skill")
-    return _no_skill(ctx, current, step)
+    return _no_skill(ctx, current, step, state["query"])
 
 
-def _no_skill(ctx: Context, current: dict, step: dict) -> Command:
+_GENERIC_SLUG_WORDS = {"annotation", "deconvolution", "integration", "registration", "alignment", "trajectory", "spatial", "domain", "detection", "statistics", "enrichment", "pathway", "communication", "celltype", "analysis", "stats", "neighborhood", "differential", "expression"}
+
+
+def _disabled_skill_named(ctx: Context, step: dict, query: str) -> Any:
+    """The installed-but-disabled skill whose distinctive name the request uses, if any."""
+    text = f"{step.get('refined_query', '')} {step.get('description', '')} {query}".lower()
+    for slug in sorted(ctx.registry.disabled):
+        skill = ctx.registry.skills.get(slug)
+        if skill is None:
+            continue
+        tokens = [t for t in slug.lower().split("-") if len(t) >= 5 and t not in _GENERIC_SLUG_WORDS]
+        if any(re.search(rf"\b{re.escape(t)}", text) for t in tokens):
+            return skill
+    return None
+
+
+def _no_skill(ctx: Context, current: dict, step: dict, query: str = "") -> Command:
     """No registered skill: lightweight ``general`` steps run without a method card (the 0.1 general
-    analysis mode); anything that names a method goes through the out-of-registry protocol."""
+    analysis mode); anything that names a method goes through the out-of-registry protocol. A request
+    that names a skill which is installed but switched off gets advice instead of a re-implementation."""
+    disabled = _disabled_skill_named(ctx, step, query)
+    if disabled is not None:
+        advice = f"The '{disabled.name}' skill ({disabled.slug}) is installed but switched off, so I did not run it. Enable it in the Skills panel and ask again, or say explicitly that you want a custom implementation instead."
+        ctx.emit(AdviceEvent(message=advice, skill=disabled.slug, step_id=current["step_id"], unmet=[f"skill {disabled.slug} is disabled"]))
+        current.update(status="blocked", mode="advice", advice=advice, unmet=[f"skill {disabled.slug} is disabled"])
+        return Command(update={"current": current}, goto="block_step")
     if step.get("kind") == "general":
         current.update(mode="unguarded", contract=None)
         ctx.emit(UnguardedMode(step_id=current["step_id"], reason="general analysis: no method named, no skill required"))

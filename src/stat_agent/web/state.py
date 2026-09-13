@@ -89,6 +89,14 @@ class AppState:
     # ---- lifecycle ------------------------------------------------------------------------------------------
     def create_session(self, dataset_dir: str | None, *, session_name: str | None = None, provider: str | None = None, model: str | None = None, api_key: str | None = None, base_url: str | None = None, mode: str | None = None, session_dir_to_load: str | None = None) -> None:
         with self._lock:
+            # validate first: a mistyped path must not destroy the session the user is working in
+            if session_dir_to_load:
+                if not (Path(session_dir_to_load) / "manifest.json").exists():
+                    raise FileNotFoundError(f"Saved session not found: {session_dir_to_load}")
+            elif not dataset_dir or not Path(dataset_dir).is_dir():
+                raise FileNotFoundError(f"Dataset directory not found: {dataset_dir}")
+            elif not any(Path(dataset_dir).glob("*.h5ad")):
+                raise FileNotFoundError(f"No .h5ad files in dataset directory: {dataset_dir}")
             self._teardown()
             saved = None
             if session_dir_to_load:
@@ -113,6 +121,7 @@ class AppState:
             notebook = NotebookLogger(self.session_dir)
             notebook.initialize_notebook(dataset_dir or session_dir_to_load, name)
             self.generation += 1
+            self.events.publish(SessionReset(generation=self.generation))  # pages bound to the old log reload instead of listening to a dead log
             self.events = EventLog(self.session_dir)
             self.events.generation = self.generation
             try:

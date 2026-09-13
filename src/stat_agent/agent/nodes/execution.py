@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
+import threading
 
 from langgraph.runtime import Runtime as LGRuntime
 from langgraph.types import Command
@@ -21,6 +24,7 @@ from stat_agent.events.catalogue import (
     TextDelta,
     TextEvent,
     ValidateResult,
+    WarningEvent,
 )
 from stat_agent.ledger.provenance import StepRef
 from stat_agent.memory.context import namespace_block, turn_steps_block
@@ -39,6 +43,37 @@ GENERAL_NOTE = (
     "**NOTE: no registered skill covers this request; proceed with general analysis and state your assumptions. If the request "
     "names a method or tool you are not using, say so in your first sentence and name what you use instead.**"
 )
+
+
+class _OutputBatcher:
+    """Groups a block's stdout lines into one ``exec_output`` event per ~100 ms or 50 lines: one
+    event per line let a verbose block overflow the subscriber queues and storm the page with resyncs."""
+
+    def __init__(self, ctx: Context, block_id: str, max_lines: int = 50, interval: float = 0.1) -> None:
+        self.ctx, self.block_id, self.max_lines, self.interval = ctx, block_id, max_lines, interval
+        self._buf: list[OutputLine] = []
+        self._lock = threading.Lock()
+
+    def add(self, stream: str, line: str) -> None:  # called from the run thread
+        with self._lock:
+            self._buf.append(OutputLine(stream=stream, text=line))
+            full = len(self._buf) >= self.max_lines
+        if full:
+            self.flush()
+
+    def flush(self) -> None:
+        with self._lock:  # emit under the lock so batches leave in order whichever thread flushes
+            lines, self._buf = self._buf, []
+            if lines:
+                self.ctx.emit(ExecOutput(block_id=self.block_id, lines=lines))
+
+    async def pump(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(self.interval)
+                self.flush()
+        finally:
+            self.flush()
 
 
 def _card_guidance(card: MethodCard) -> str:
@@ -207,6 +242,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     reads: set[str] = set(current.get("reads", []))
     figures: list[str] = list(current.get("figures", []))
     code_writes: set[str] = set(current.get("code_writes") or []) if continuing else set()  # unqualified kind:key refs the code wrote, on any object
+    replaced_loaded: list[str] = list(current.get("replaced_loaded") or []) if continuing else []
     max_attempts = ctx.ablation.max_reflect_attempts if ctx.ablation.reflector else 0
     query = current.get("query_used") or state["query"]
     phase(ctx, "running")
@@ -220,16 +256,20 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
             block_id = f"{step_id}-b{bi + 1}-a{attempt}"
             ctx.emit(CodeBlockStarted(block_id=block_id, step_id=step_id, code=code, attempt=attempt))
 
-            def on_output(stream: str, line: str, _bid=block_id) -> None:
-                ctx.emit(ExecOutput(block_id=_bid, lines=[OutputLine(stream=stream, text=line)]))
-
-            res = await ctx.runtime.arun(
-                code,
-                on_output=on_output,
-                skills=[skill] if skill else [],
-                export_pythonpath=bool(skill and skill.meta.dependencies.subprocess_workers),
-                label=f"turn:{state['turn_id']}",
-            )
+            batcher = _OutputBatcher(ctx, block_id)
+            pump = asyncio.create_task(batcher.pump())
+            try:
+                res = await ctx.runtime.arun(
+                    code,
+                    on_output=batcher.add,
+                    skills=[skill] if skill else [],
+                    export_pythonpath=bool(skill and skill.meta.dependencies.subprocess_workers),
+                    label=f"turn:{state['turn_id']}",
+                )
+            finally:
+                pump.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await pump
             block_figs: list[str] = []
             for png in res.figures:
                 fid = ctx.figure_store(png, step_id, block_id) if ctx.figure_store else f"{block_id}-f{len(block_figs) + 1}"
@@ -256,6 +296,10 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                     wrote_anything = True
                     ctx.emit(delta.to_event(origin="agent"))
                     produced += [a for a in delta.entry.touched if a not in produced]
+                    new_replaced = [a for a in delta.entry.replaced_loaded if a not in replaced_loaded]
+                    if new_replaced:
+                        replaced_loaded += new_replaced
+                        ctx.emit(WarningEvent(message="This step replaced data that came with the dataset: " + ", ".join(new_replaced) + ". The original values are no longer in memory; reload the dataset to get them back.", code="replaced_loaded"))
                 if res.access:
                     reads |= {f"{r}" for r in res.access.reads}
             # what the code itself wrote (assignments and known library effects) also counts as produced,
@@ -332,7 +376,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     # the code wrote a declared output somewhere (a pooled or subset object, say): the step did its
     # work on a derived object and is accepted; only an inspection-only step gets a continuation
     declared_hit = bool(contract is not None and any(w.split(":", 1)[0] == a.kind and a.matches(w.split(":", 1)[1]) for a in contract.produces for w in code_writes if ":" in w))
-    current.update(results=results, produced=produced, reads=sorted(reads), figures=figures, code_writes=sorted(code_writes))
+    current.update(results=results, produced=produced, reads=sorted(reads), figures=figures, code_writes=sorted(code_writes), replaced_loaded=replaced_loaded)
     if missing and not continuing and not wrote_anything and not declared_hit and not cancelled(ctx):
         # the code ran but wrote nothing (an inspection-only step): one continuation on the live
         # namespace, never a re-run of what already succeeded
@@ -374,6 +418,8 @@ async def analyze_node(state: TurnState, runtime: LGRuntime[Context]):
                 produced=produced,
                 incomplete=list(current.get("incomplete") or []),
                 turn_steps=turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else "",
+                stale=[a for a in ctx.ledger.stale_ids() if a.split(":", 1)[0] in {f"s{i}" for i in current["target_slice_ids"]}] if ctx.ablation.provenance else [],
+                replaced_loaded=list(current.get("replaced_loaded") or []),
                 turn_id=state["turn_id"],
                 step=current["step_number"],
             )

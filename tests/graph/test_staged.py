@@ -524,6 +524,100 @@ def test_results_on_a_derived_object_are_accepted_without_continuation(registry)
     assert [e for e in events if e.type == "step_done"][0].status == "done" and events[-1].state == "done"
 
 
+def test_step_that_overwrites_loaded_data_is_flagged(registry):
+    """S1_cell_gene ships obs:celltype; the annotation step rewrites it: a warning event and an analyser note."""
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "analyzer":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    warn = [e for e in events if e.type == "warning"]
+    assert warn and "came with the dataset" in warn[0].message and "s0:obs:celltype" in warn[0].message
+    assert "overwrote data that came with the dataset" in seen[-1] and "s0:obs:celltype" in seen[-1]
+    assert events[-1].type == "turn_done" and events[-1].state == "done"
+
+
+def test_analyser_sees_stale_artefacts_of_its_slices(registry):
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "analyzer":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    agent.ledger.mark_stale("s0:obs:x", "test edit")
+    asyncio.run(collect(agent.run_turn("describe the data")))
+    assert "currently marked STALE" in seen[-1] and "s0:obs:x" in seen[-1]
+
+
+def test_request_naming_a_disabled_skill_gets_advice(registry):
+    from tests.graph.conftest import default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        return default_responder(role, messages, schema)
+
+    registry.disable("mini-niche")
+    try:
+        agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+        events = asyncio.run(collect(agent.run_turn("detect niches")))
+    finally:
+        registry.enable("mini-niche")
+    advice = [e for e in events if e.type == "advice"]
+    assert advice and "switched off" in advice[0].message and advice[0].skill == "mini-niche"
+    assert "generator" not in calls and "method_card" not in calls
+    assert [e for e in events if e.type == "step_done"][0].status == "blocked"
+
+
+def test_no_summariser_call_after_a_stop(registry):
+    from tests.graph.conftest import default_responder, make_agent
+
+    calls: list[str] = []
+
+    stop_next = {"on": True}
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "generator" and stop_next["on"]:
+            return "Working.\n```python\nimport time\nstat_test_stop()\nfor _ in range(600):\n    time.sleep(0.05)\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    agent.memory.window_turns = 0  # every finished turn overflows the window
+    agent.runtime.namespace["stat_test_stop"] = agent.cancel
+    events = asyncio.run(collect(agent.run_turn("describe the data")))
+    assert events[-1].state == "cancelled" and "summarizer" not in calls
+    stop_next["on"] = False
+    asyncio.run(collect(agent.run_turn("describe the data")))
+    assert "summarizer" in calls
+
+
+def test_output_lines_are_batched_in_order(registry):
+    from tests.graph.conftest import default_responder
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            return "Printing.\n```python\nfor i in range(120):\n    print('line', i)\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("describe the data")))
+    outs = [e for e in events if e.type == "exec_output"]
+    lines = [ln.text for e in outs for ln in e.lines]
+    assert lines == [f"line {i}" for i in range(120)] and len(outs) <= 6
+
+
 def test_failed_step_stays_failed_in_the_plan_view(registry):
     """Independent steps: step 1 fails for good, step 2 still runs, and no later plan view repaints step 1 as done."""
     from tests.graph.conftest import default_responder

@@ -60,6 +60,7 @@ class LedgerEntry(BaseModel):
     removed: list[str] = Field(default_factory=list)
     stale_now: list[str] = Field(default_factory=list)
     stale_cleared: list[str] = Field(default_factory=list)
+    replaced_loaded: list[str] = Field(default_factory=list)  # artefacts that came with the dataset and were overwritten by this run
 
     @property
     def touched(self) -> list[str]:
@@ -191,17 +192,18 @@ class ProvenanceLedger:
         """Record an agent run. ``reads`` are unqualified ``kind:key`` refs from the code
         scan (qualified per target slice); ``roi_reads`` are ROI names; ``declared_consumes``
         are unqualified refs from the skill contract; ``writes`` are unqualified refs the code
-        (or the contract's ``produces``) wrote - an unchanged but re-written artefact counts as
-        re-produced and loses its stale status."""
+        assigned. Only the snapshot diff decides what changed. A key the code assigned whose values
+        did not change is not a change (it is most often a write to a copy or a subset, or a
+        library call with a custom key): it is never reported as updated and never marks
+        dependants stale. The one thing it does is clear a stale flag on that key, so that
+        re-running a producer that reproduces identical values counts as re-produced."""
         diff = diff_snapshots(before, after)
-        rewritten: list[str] = []
+        reproduced: list[str] = []
         for ref in set(writes):
             for sid in (list(target_slice_ids) or sorted({a.slice_id for a in before.artifacts.values() if a.slice_id is not None})):
                 qid = f"s{sid}:{ref}"
-                if qid in after.artifacts and qid not in diff.added and qid not in diff.changed and qid in self.artifacts:
-                    rewritten.append(qid)
-        if rewritten:
-            diff = SnapshotDiff(added=list(diff.added), removed=list(diff.removed), changed=sorted(set(diff.changed) | set(rewritten)))
+                if qid in after.artifacts and qid not in diff.added and qid not in diff.changed and self.artifacts.get(qid) is not None and self.artifacts[qid].status == "stale":
+                    reproduced.append(qid)
         targets = list(target_slice_ids) or sorted({parse_artifact_id(a)[0] for a in diff.touched if parse_artifact_id(a)[0] is not None})
         candidates: set[str] = set()
         for ref in set(reads) | set(declared_consumes):
@@ -215,7 +217,7 @@ class ProvenanceLedger:
         def inputs_for(aid: str) -> list[str]:
             return sorted(c for c in candidates if c != aid and c in before.artifacts and c not in diff.touched)
 
-        return self._apply(diff, after, origin=origin, producer=producer, inputs_for=inputs_for, outcome=outcome)
+        return self._apply(diff, after, origin=origin, producer=producer, inputs_for=inputs_for, outcome=outcome, reproduced=reproduced)
 
     def record_external(self, before: Snapshot, after: Snapshot, origin: str = "gui", label: str | None = None) -> LedgerDelta:
         diff = diff_snapshots(before, after)
@@ -234,10 +236,16 @@ class ProvenanceLedger:
             self.log.append(LedgerEntry(seq=self.version, origin="manual", stale_now=newly))
         return newly
 
-    def _apply(self, diff: SnapshotDiff, after: Snapshot, *, origin: str, producer: StepRef | None, inputs_for, outcome: str = "ok") -> LedgerDelta:
+    def _apply(self, diff: SnapshotDiff, after: Snapshot, *, origin: str, producer: StepRef | None, inputs_for, outcome: str = "ok", reproduced: Iterable[str] = ()) -> LedgerDelta:
         now = time.time()
         touched = set(diff.touched)
         stale_cleared: list[str] = []
+        if outcome == "ok":
+            for aid in reproduced:  # re-written with identical values by a successful run: fresh again, attributed to this run
+                a = self.artifacts[aid]
+                a.status, a.stale_reason, a.updated_at = "fresh", None, now
+                a.produced_by, a.origin, a.inputs = producer, origin, inputs_for(aid)
+                stale_cleared.append(aid)
         for aid in diff.added:
             fp = after.artifacts[aid]
             existing = self.artifacts.get(aid)
@@ -247,6 +255,7 @@ class ProvenanceLedger:
                 produced_by=producer, inputs=inputs_for(aid), status="fresh", origin=origin, created_at=now, updated_at=now,
                 shape=list(fp.shape) if fp.shape else None, dtype=fp.dtype,
             )
+        replaced_loaded = [aid for aid in diff.changed if origin != "load" and aid in self.artifacts and self.artifacts[aid].origin == "load"]
         for aid in diff.changed:
             fp = after.artifacts[aid]
             a = self.artifacts[aid]
@@ -278,7 +287,7 @@ class ProvenanceLedger:
             entry = LedgerEntry(seq=self.version, ts=now, origin=origin, producer=producer)
             return LedgerDelta(entry=entry, ledger_version=self.version, summary=summarize_v1([], [], []))
         self.version += 1
-        entry = LedgerEntry(seq=self.version, ts=now, origin=origin, producer=producer, added=list(diff.added), changed=list(diff.changed), removed=list(diff.removed), stale_now=stale_now, stale_cleared=stale_cleared)
+        entry = LedgerEntry(seq=self.version, ts=now, origin=origin, producer=producer, added=list(diff.added), changed=list(diff.changed), removed=list(diff.removed), stale_now=stale_now, stale_cleared=stale_cleared, replaced_loaded=replaced_loaded)
         self.log.append(entry)
         return LedgerDelta(entry=entry, ledger_version=self.version, summary=summarize_v1(diff.added, diff.changed, diff.removed))
 

@@ -191,6 +191,7 @@ import numpy as np
 5. **Write clean Python code** with proper error handling
 6. **Create visualizations** - matplotlib figures are auto-captured and displayed. Use `plt.show()` to finish plots. Do NOT use `plt.savefig()` — it is unnecessary and will clutter the working directory
 7. **Format code blocks** with ```python fences
+8. **Never overwrite data that came with the dataset** (for example `adata.obs['celltype']` or `adata.obsm['deconv_weights']`) unless the user asked to replace it: write a new result under a new key (`celltype_<method>`, `deconv_weights_<method>`) and say which key you used
 
 **When NOT to generate code:**
 - Greetings/introductions

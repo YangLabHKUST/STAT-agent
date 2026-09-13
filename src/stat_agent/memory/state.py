@@ -95,8 +95,8 @@ class TurnRecord(BaseModel):
             # what the summary line does not carry: the skill, the artefacts, the variables, what stayed open
             bits = []
             if h.skill:
-                bits.append(f"skill {h.skill}")
-            if h.mode in ("unguarded", "advice", "failed", "skipped", "cancelled"):
+                bits.append(f"skill {h.skill}" + ("" if h.success else f" (not run: {h.mode})"))
+            elif h.mode in ("unguarded", "advice", "failed", "skipped", "cancelled"):
                 bits.append(h.mode)
             if h.outputs:
                 bits.append("outputs " + ", ".join(h.outputs[:8]))

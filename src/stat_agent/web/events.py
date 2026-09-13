@@ -75,6 +75,10 @@ class EventLog:
                 q.get_nowait()
             except asyncio.QueueEmpty:
                 pass
+            # one resync sentinel per overflow episode: the client replays from the snapshot once,
+            # not once per dropped frame
+            if any(isinstance(it, tuple) and it and it[0] == "resync" for it in getattr(q, "_queue", ())):
+                return
             q.put_nowait(("resync", "resync", None))
 
     def _persist(self, turn_id: str | None, frame: str) -> None:

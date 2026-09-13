@@ -30,7 +30,8 @@ Provide JSON response:
 }
 
 {% raw %}Rules:
-- response_summary: Always provide, covers entire response
+- response_summary: Always provide, covers entire response. For a factual question (a count, a list, a table, a median, a set of names) it must contain the actual values printed, in full when the table has at most about twenty rows; never replace the numbers with "the breakdown was printed".
+- You cannot see figures. Never describe what a plot shows or is expected to show; say what was plotted (variables, slices, groups) from the code and the printed output, and say that the figure itself is in the viewer.
 - data_changes: Always provide, be detailed and specific
 - interpretation: Only if requested above (otherwise null)
 - key_findings: Only if interpretation requested (otherwise empty array)
