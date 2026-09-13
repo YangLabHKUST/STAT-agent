@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from stat_agent.skills.lint import scan_code
@@ -53,10 +54,12 @@ class _SliceAndPathScan(ast.NodeVisitor):
             self.paths.append(node.value)
 
 
-def code_access(code: str) -> CodeAccess:
+def code_access(code: str, derived_names: Iterable[str] = ()) -> CodeAccess:
+    """Static access scan of one block. ``derived_names`` are namespace variables known to hold an
+    AnnData that is not a session slice; reads on them are not slice reads (see ``_BodyScan``)."""
     acc = CodeAccess()
     try:
-        scan = scan_code(code)
+        scan = scan_code(code, derived_names)
     except SyntaxError as exc:
         acc.parse_error = f"{exc.msg} (line {exc.lineno})"
         return acc

@@ -442,6 +442,11 @@ Session directories: `~/Downloads/A0/session_20260912_122258` (turns 1 to 3), `~
 **Fix:** the status is set before the cancel request; a finished turn disables its open prompt cards; below 1200 pixels the viewer keeps at least 300 pixels and the toolbar wraps; one reply per prompt with the prompt restored only on a validation or mismatch error; the notebook button opens the notebook URL. **Verified in the browser** with the reviewer's scripts (idle status after cancel, no enabled dead card, one reply request on a double Enter, 388 pixel viewer and unclipped toolbar at 1024 by 700). **Status: done.**
 </div>
 
+<div class="bug medium" markdown="1">
+**B37. Six false "stale" marks after a pooled analysis** (CRC session, turns 6 and 7). Turn 6 clustered the Goblet spots of all three slices in one pooled AnnData and stored the cluster markers on every slice under new keys. Turn 7's pooled macrophage DE then overwrote slice 0's `rank_genes_groups`, and the Changes panel marked the six Goblet artefacts stale with "input changed". The Goblet step had read `rank_genes_groups` only on the in-memory pooled object; the code scan attributed every `X.uns['key']` read to the target slices, so the ledger had recorded slice 0's and slice 1's `rank_genes_groups` as inputs of the Goblet results.
+**Fix:** the scan is receiver-aware. A read counts only when its receiver can be a session slice (`session.get_slice(i).adata`, a name bound to one, a slice iterated from the session, a subset or copy of one); a read on an object built by another call (`ad.concat`, `sc.read_h5ad`) or on a namespace variable holding an AnnData that is not a slice is not a slice read; an aliased container (`obs = adata.obs; obs['celltype']`), which the scan used to miss entirely, is now followed too. Writes are unchanged (the snapshot diff decides what changed). **Status: done, tested** (`test_code_access_reads_only_count_on_session_slices`, `test_reads_on_a_pooled_object_are_not_slice_inputs`). A session started before the fix keeps its marks; "Re-run" there recomputes the Goblet markers on the pooled object still in the namespace and clears them.
+</div>
+
 ### 10b. Review items fixed (evening of 2026-09-12)
 
 The independent review's findings are numbered F1 to F50 in its own report. Fixed here, all covered by the suite (134 passed):

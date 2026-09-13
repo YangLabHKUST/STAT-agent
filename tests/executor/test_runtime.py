@@ -125,3 +125,72 @@ def test_snapshot_diff_is_pure():
     c = take_snapshot(s)
     d = diff_snapshots(a, c)
     assert d.changed == ["s1:obs:celltype"] and not d.added
+
+
+def test_code_access_reads_only_count_on_session_slices():
+    """Reads become ledger inputs, so only receivers that can be a session slice count: a slice, a
+    name bound to one, a slice iterated from the session, a subset or copy of one. Objects built by
+    other calls (ad.concat, sc.read_h5ad) and names seeded as derived (a pooled AnnData kept in the
+    namespace) are skipped; an unknown name still counts; rebinding a seeded name to a slice restores it."""
+    code = (
+        "import anndata as ad\n"
+        "import scanpy as sc\n"
+        "parts = []\n"
+        "for sid in [0, 1]:\n"
+        "    a = session.get_slice(sid).adata\n"
+        "    sub = a[a.obs['celltype'] == 'T'].copy()\n"
+        "    sub.obs['tag'] = sid\n"
+        "    parts.append(sub)\n"
+        "pooled = ad.concat(parts)\n"
+        "sc.tl.rank_genes_groups(pooled, 'tag')\n"
+        "top = pooled.uns['rank_genes_groups']\n"
+        "ref = sc.read_h5ad('ref.h5ad')\n"
+        "print(sub.obs['tag'], goblet.uns['rank_genes_groups'], ref.obs['reference_only'], unknown.obs['seen'])\n"
+        "if 'k1' in pooled.uns and 'k2' in a.uns:\n"
+        "    pass\n"
+        "for sl in session.iter_slices():\n"
+        "    print(sl.adata.obs['x'])\n"
+        "goblet = session.get_slice(1).adata\n"
+        "print(goblet.obs['rebound'])\n"
+        "session.get_slice(0).adata.uns['top'] = top\n"
+        "obs = a.obs\n"
+        "pobs = pooled.obs\n"
+        "print(obs['aliased'], pobs['skipped'])\n"
+        "obs['via_alias'] = 1\n"
+        "if 'c3' in obs.columns and 'c4' in pobs.columns and 'k5' in obs:\n"
+        "    pass\n"
+    )
+    acc = code_access(code, derived_names={"goblet"})
+    assert acc.reads == {"obs:celltype", "obs:tag", "obs:seen", "uns:k2", "obs:x", "obs:rebound", "obs:aliased", "obs:c3", "obs:k5"}
+    assert acc.writes == {"obs:tag", "uns:top", "obs:via_alias"}  # writes stay receiver-agnostic; the snapshot decides
+    assert "sc.tl.rank_genes_groups" in acc.calls and acc.paths == ["ref.h5ad"]
+
+
+def test_reads_on_a_pooled_object_are_not_slice_inputs():
+    """The CRC session case: a pooled AnnData kept in the namespace, its own result read back and
+    stored on the slices under new keys, then a later step overwriting a slice's key of the same
+    name. The pooled results depend on no slice artefact and must not go stale."""
+    from stat_agent.ledger.provenance import ProvenanceLedger, StepRef
+
+    session = make_session("S3_two_slice_gene")
+    rt = Runtime(session, timeout_s=30)
+    ledger = ProvenanceLedger()
+    ledger.initialize(take_snapshot(session))
+
+    def record(res, turn, targets):
+        return ledger.record_step(res.snapshot_before, res.snapshot_after, producer=StepRef(turn_id=turn, step=1), reads=res.access.reads, writes=res.access.writes, target_slice_ids=targets)
+
+    r1 = rt.run("for sid in [0, 1]:\n    session.get_slice(sid).adata.uns['rank_genes_groups'] = {'names': ['g1'], 'sid': sid}\n")
+    assert r1.success
+    record(r1, "t1", [0, 1])
+    r2 = rt.run("import anndata as ad\npooled = ad.concat([session.get_slice(0).adata, session.get_slice(1).adata], index_unique='-')\npooled.uns['rank_genes_groups'] = {'names': ['g2']}\n")
+    assert r2.success and "pooled" in rt._derived_names()
+    r3 = rt.run("res = pooled.uns['rank_genes_groups']\nfor sid in [0, 1]:\n    session.get_slice(sid).adata.uns['pooled_markers'] = res\n")
+    assert r3.success and r3.access.reads == set()
+    delta = record(r3, "t2", [0, 1])
+    assert set(delta.entry.added) == {"s0:uns:pooled_markers", "s1:uns:pooled_markers"}
+    assert ledger.get("s0:uns:pooled_markers").inputs == [] and ledger.get("s1:uns:pooled_markers").inputs == []
+    r4 = rt.run("session.get_slice(0).adata.uns['rank_genes_groups'] = {'names': ['g3']}\n")
+    delta = record(r4, "t3", [0])
+    assert delta.entry.changed == ["s0:uns:rank_genes_groups"] and delta.entry.stale_now == []
+    assert ledger.stale_ids() == []

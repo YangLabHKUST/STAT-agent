@@ -127,8 +127,11 @@ filesystem so skill bodies are only disclosed through the registry). Select it w
 
 Artefacts are identified as `s<slice>:<kind>:<key>` (for example `s0:obs:celltype`), `roi:<name>`
 and `fig:<id>`. Each executed step records the snapshot diff, the declared and traced inputs, and a
-producer reference. Deleting or changing an input marks every dependant stale; re-producing an
-artefact clears it. GUI edits go through `SessionMutator` and record the same way, so the canvas
+producer reference. A traced read counts only when its receiver can be a session slice
+(`session.get_slice(i).adata`, a name bound to one, a slice iterated from the session, a subset or
+copy of one, an aliased container such as `obs = adata.obs`); a read on an AnnData built by another
+call (`ad.concat`, `sc.read_h5ad`) or kept in the namespace as a non-slice object is not an input. Deleting or changing an input marks every
+dependant stale; re-producing an artefact clears it. GUI edits go through `SessionMutator` and record the same way, so the canvas
 and the agent are two views of one state. The event `provenance_update` carries both the v1
 `state_changes` keys and the stale set.
 

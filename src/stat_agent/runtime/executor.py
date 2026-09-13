@@ -243,6 +243,14 @@ class Runtime:
         """Names user code left in the namespace (oldest first): no seeds, no modules, no private names."""
         return [k for k, v in self.namespace.items() if not k.startswith("_") and k not in SEEDED_NAMES and not inspect.ismodule(v)]
 
+    def _derived_names(self) -> set[str]:
+        """Namespace variables holding an AnnData that is not a session slice (a pooled or subset object
+        kept from an earlier block): a read on one of them is not a read of any slice."""
+        import anndata as ad
+
+        slice_adatas = {id(s.adata) for s in self.session.slices.values()}
+        return {n for n, v in self.namespace.items() if n not in SEEDED_NAMES and isinstance(v, ad.AnnData) and id(v) not in slice_adatas}
+
     def describe_namespace(self, limit: int = 40) -> list[tuple[str, str]]:
         """(name, description) for the last `limit` user variables; what the generator is shown."""
         return [(n, describe_value(self.namespace[n])) for n in self.user_variables()[-limit:]]
@@ -279,7 +287,7 @@ class Runtime:
         run_id = uuid.uuid4().hex[:8]
         code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
         result = RunResult(run_id=run_id, success=False, code=code, code_hash=code_hash)
-        result.access = code_access(code)
+        result.access = code_access(code, self._derived_names())
         if not code:
             result.error, result.error_type, result.refused = "Empty code provided", "EmptyCode", True
             return result

@@ -11,7 +11,7 @@ import ast
 import re
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from stat_agent.skills.registry import Skill
 from stat_agent.skills.schema import ARTIFACT_KINDS, SkillFrontmatter, parse_skill_text
@@ -139,33 +139,98 @@ def _dotted(node: ast.AST) -> Optional[str]:
 
 
 class _BodyScan(ast.NodeVisitor):
-    """Collect artefact writes/reads, ROI names, calls and imports from one code block."""
+    """Collect artefact writes/reads, ROI names, calls and imports from one code block.
 
-    def __init__(self) -> None:
+    Reads are what the ledger turns into slice inputs, so a read is recorded only when its
+    receiver can be a session slice: ``session.get_slice(i).adata``, a name bound to one, a
+    slice iterated from the session, or a subset/copy of one (its values still come from the
+    slice). A read on an object built by any other call (``ad.concat(...)``, ``sc.read_h5ad(...)``)
+    or on a name listed in ``derived_names`` (the live namespace holds a non-slice AnnData under
+    it, such as a pooled object kept from an earlier block) is not a read of any slice and is
+    skipped. An unknown name counts (the conservative choice). Writes stay receiver-agnostic:
+    the snapshot diff decides what changed; the write list only says what the code assigned."""
+
+    def __init__(self, derived_names: Iterable[str] = ()) -> None:
         self.writes: Set[str] = set()
         self.reads: Set[str] = set()
         self.dynamic_keys: List[int] = []
         self.calls: Set[str] = set()
         self.imports: Set[str] = set()
         self.roi_names: Set[str] = set()
+        self.slice_names: Set[str] = set()
+        self.derived_names: Set[str] = set(derived_names)
+        self.container_names: Dict[str, Tuple[str, Optional[str]]] = {}  # obs = adata.obs -> {'obs': ('obs', class)}
 
     def _artifact(self, node: ast.AST) -> Optional[Tuple[str, Optional[str]]]:
         """Return ``(kind, key)`` for ``x.obs['key']``-like subscripts; key None if dynamic."""
         if not isinstance(node, ast.Subscript):
             return None
         target = node.value
-        if not isinstance(target, ast.Attribute) or target.attr not in ATTR_KINDS:
+        if isinstance(target, ast.Name) and target.id in self.container_names:
+            kind = self.container_names[target.id][0]
+        elif not isinstance(target, ast.Attribute) or target.attr not in ATTR_KINDS:
             return None
-        kind = target.attr
+        else:
+            kind = target.attr
         idx = node.slice
         if isinstance(idx, ast.Constant) and isinstance(idx.value, str):
             return kind, idx.value
         return kind, None
 
+    def _classify(self, node: ast.AST) -> Optional[str]:
+        """'slice' for a session slice or a subset/copy of one, 'derived' for an object built by any
+        other call, None when unknown."""
+        if isinstance(node, ast.Name):
+            if node.id in self.derived_names:
+                return "derived"
+            if node.id in self.slice_names:
+                return "slice"
+            return None
+        if isinstance(node, ast.Call):
+            dotted = _dotted(node.func) or ""
+            if dotted.startswith("session.") or dotted.endswith(".get_slice"):
+                return "slice"
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "copy":
+                return self._classify(node.func.value)
+            return "derived"
+        if isinstance(node, ast.Attribute):
+            inner = self._classify(node.value)
+            if node.attr == "adata":
+                return "derived" if inner == "derived" else "slice"
+            return inner
+        if isinstance(node, ast.Subscript):
+            return self._classify(node.value)
+        return None
+
+    def _receiver_class(self, node: ast.Subscript) -> Optional[str]:
+        """Class of the object whose container ``node`` subscripts (``x`` in ``x.obs['k']``)."""
+        if isinstance(node.value, ast.Name):
+            return self.container_names[node.value.id][1]
+        return self._classify(node.value.value)
+
+    def _bind(self, target: ast.AST, cls: Optional[str], value: Optional[ast.AST] = None) -> None:
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                self._bind(elt, cls)
+            return
+        if isinstance(target, ast.Name):
+            self.slice_names.discard(target.id)
+            self.derived_names.discard(target.id)
+            self.container_names.pop(target.id, None)
+            if isinstance(value, ast.Attribute) and value.attr in ATTR_KINDS:  # obs = adata.obs
+                self.container_names[target.id] = (value.attr, self._classify(value.value))
+            elif cls == "slice":
+                self.slice_names.add(target.id)
+            elif cls == "derived":
+                self.derived_names.add(target.id)
+
     def visit_Assign(self, node: ast.Assign) -> None:
         for t in node.targets:
             self._record_write(t)
-        self.generic_visit(node)
+        self.generic_visit(node)  # reads in the value refer to the names as bound before this line
+        cls = self._classify(node.value)
+        for t in node.targets:
+            self._bind(t, cls, node.value)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
         self._record_write(node.target)
@@ -173,6 +238,12 @@ class _BodyScan(ast.NodeVisitor):
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
         self._record_write(node.target)
+        self.generic_visit(node)
+        if node.value is not None:
+            self._bind(node.target, self._classify(node.value), node.value)
+
+    def visit_For(self, node: ast.For) -> None:
+        self._bind(node.target, self._classify(node.iter))
         self.generic_visit(node)
 
     def _record_write(self, target: ast.AST) -> None:
@@ -194,7 +265,7 @@ class _BodyScan(ast.NodeVisitor):
             kind, key = art
             if key is None:
                 self.dynamic_keys.append(node.lineno)
-            else:
+            elif self._receiver_class(node) != "derived":
                 self.reads.add(f"{kind}:{key}")
         self.generic_visit(node)
 
@@ -204,9 +275,19 @@ class _BodyScan(ast.NodeVisitor):
             if isinstance(node.ops[0], (ast.In, ast.NotIn)) and node.comparators:
                 comp = node.comparators[0]
                 dotted = _dotted(comp) or ""
+                parts = dotted.split(".")
+                if parts[0] in self.container_names and parts[1:] in ([], ["columns"], ["keys"]):  # 'k' in obs.columns
+                    kind, cls = self.container_names[parts[0]]
+                    if cls != "derived":
+                        self.reads.add(f"{kind}:{node.left.value}")
                 for kind in ATTR_KINDS:
                     if dotted.endswith(f".{kind}") or dotted.endswith(f".{kind}.columns") or dotted.endswith(f".{kind}.keys"):
-                        self.reads.add(f"{kind}:{node.left.value}")
+                        container = comp
+                        while isinstance(container, ast.Attribute) and container.attr != kind:
+                            container = container.value
+                        receiver = container.value if isinstance(container, ast.Attribute) else container
+                        if self._classify(receiver) != "derived":
+                            self.reads.add(f"{kind}:{node.left.value}")
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -227,8 +308,8 @@ class _BodyScan(ast.NodeVisitor):
             self.imports.add(node.module.split(".")[0])
 
 
-def scan_code(code: str) -> _BodyScan:
-    scan = _BodyScan()
+def scan_code(code: str, derived_names: Iterable[str] = ()) -> _BodyScan:
+    scan = _BodyScan(derived_names)
     scan.visit(ast.parse(code))
     return scan
 
