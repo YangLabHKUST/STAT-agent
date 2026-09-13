@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from langgraph.runtime import Runtime as LGRuntime
 from langgraph.types import Command
 
@@ -10,6 +12,7 @@ from stat_agent.agent.nodes.common import (
     cancel_turn,
     cancelled,
     emit_prompt,
+    mark_step,
     obtain_decision,
     phase,
 )
@@ -104,6 +107,7 @@ async def ask_skill_node(state: TurnState, runtime: LGRuntime[Context]):
     if pending is None:
         return Command(goto="verify")
     phase(ctx, "waiting", "skill selection")
+    mark_step(ctx, current["step_number"])  # a resume re-enters here with a fresh emitter
     decision, assumptions = obtain_decision(state, ctx, pending, current["step_number"])
     recs = answer_records(pending, decision, current["step_number"], None)
     chosen = None
@@ -114,7 +118,9 @@ async def ask_skill_node(state: TurnState, runtime: LGRuntime[Context]):
         chosen = pending.options[int(text) - 1]["slug"]
     else:
         for o in pending.options:
-            if text and (text == o["slug"].lower() or text in o["label"].lower() or o["slug"].lower() in text):
+            slug, label = o["slug"].lower(), o["label"].lower()
+            # the slug, the whole label, or a whole word of the label (three letters or more): "no" picks nothing
+            if text and (text == slug or text == label or slug in text or (len(text) >= 3 and re.search(rf"\b{re.escape(text)}\b", label))):
                 chosen = o["slug"]
                 break
     if chosen is None:
@@ -178,12 +184,14 @@ async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
         return Command(update={"current": current}, goto="generate")
     summary = ctx.summary()
     stale = ctx.ledger.stale_ids() if ctx.ablation.provenance else []
+    ctx.skill_defaults = dict(getattr(contract, "defaults", None) or {})  # pre-answers for the auto policy
     verdict = await ctx.roles.verifier.verify(
         step,
         contract,
         summary,
         answers=answers_for(state, "verifier", skill=slug, step=current["step_number"]),
         memory=memory_of(state, ctx) if ctx.ablation.memory else None,
+        earlier_answers=memory_of(state, ctx).recent_answers("verifier") if ctx.ablation.memory else (),
         turn_steps=turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else "",
         stale=stale,
         skill_name=ctx.registry.get(slug).name if current.get("skill") else getattr(contract, "method_name", None),
@@ -214,6 +222,7 @@ async def ask_verifier_node(state: TurnState, runtime: LGRuntime[Context]):
     if pending is None:
         return Command(goto="verify")
     phase(ctx, "waiting", "prerequisites")
+    mark_step(ctx, current["step_number"])  # a resume re-enters here with a fresh emitter
     decision, assumptions = obtain_decision(state, ctx, pending, current["step_number"])
     if decision.unresolvable:
         req = decision.unresolvable[0]
@@ -221,7 +230,17 @@ async def ask_verifier_node(state: TurnState, runtime: LGRuntime[Context]):
         current.update(status="blocked", mode="advice", advice=f"This analysis needs information that cannot be assumed automatically: {req}", unmet=decision.unresolvable)
         return Command(update={"current": current, "assumptions": assumptions, "pending": None}, goto="block_step")
     recs = answer_records(pending, decision, current["step_number"], pending.skill)
-    return Command(update={"answers": recs, "assumptions": assumptions, "pending": None}, goto="verify")
+    retries = state.get("retries", 0) + 1
+    if retries > MAX_SELECTION_RETRIES:
+        unmet = list(pending.questions)
+        advice = (
+            f"The prerequisites for {pending.skill or 'this analysis'} could not be settled after {MAX_SELECTION_RETRIES + 1} rounds of questions: "
+            + "; ".join(unmet) + ". Please restate the request with these details."
+        )
+        ctx.emit(AdviceEvent(message=advice, skill=pending.skill, step_id=current["step_id"], unmet=unmet))
+        current.update(status="blocked", mode="advice", advice=advice, unmet=unmet)
+        return Command(update={"current": current, "answers": recs, "assumptions": assumptions, "pending": None, "retries": 0}, goto="block_step")
+    return Command(update={"answers": recs, "assumptions": assumptions, "pending": None, "retries": retries}, goto="verify")
 
 
 __all__ = ["filter_node", "match_node", "ask_skill_node", "synthesize_card_node", "verify_node", "ask_verifier_node"]

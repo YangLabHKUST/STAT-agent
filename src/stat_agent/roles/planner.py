@@ -56,17 +56,18 @@ class PlannerRole(Role):
     prompt_name = "planner"
 
     @staticmethod
-    def variables(query: str, summary: SessionSummary, memory: ConversationMemory | None, answers: list[tuple[str, str]], interface: InterfaceState | None = None, catalog: list[tuple[str, str]] | None = None) -> dict:
+    def variables(query: str, summary: SessionSummary, memory: ConversationMemory | None, answers: list[tuple[str, str]], interface: InterfaceState | None = None, catalog: list[tuple[str, str]] | None = None, state_block: str = "") -> dict:
         return {
             "skills_block": skills_block(catalog),
             "session_block": planner_session_block(summary) + interface_block(interface),
             "history_block": history_block(memory, "planner"),
+            "state_block": state_block,
             "user_query": query,
             "clarifications_block": clarifications_block(answers),
         }
 
-    async def plan(self, query: str, summary: SessionSummary, *, memory: ConversationMemory | None = None, answers: list[tuple[str, str]] = (), interface: InterfaceState | None = None, turn_id: str | None = None, catalog: list[tuple[str, str]] | None = None) -> PlanResult:
-        variables = self.variables(query, summary, memory, list(answers), interface, catalog)
+    async def plan(self, query: str, summary: SessionSummary, *, memory: ConversationMemory | None = None, answers: list[tuple[str, str]] = (), interface: InterfaceState | None = None, turn_id: str | None = None, catalog: list[tuple[str, str]] | None = None, state_block: str = "") -> PlanResult:
+        variables = self.variables(query, summary, memory, list(answers), interface, catalog, state_block)
         fake_input = {"query": query, "slices": [s.model_dump(include={"slice_id", "modality", "data_level", "n_obs", "has_celltype"}) for s in summary.slices], "rois": [r.name for r in summary.rois], "answers": list(answers)}
         comp = await self.call(variables, schema=PlanOutput, fake_input=fake_input, turn_id=turn_id)
         out: PlanOutput = comp.value

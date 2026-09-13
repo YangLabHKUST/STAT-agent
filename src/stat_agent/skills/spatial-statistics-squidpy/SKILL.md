@@ -81,6 +81,8 @@ sc.pp.normalize_total(adata_norm, target_sum=1e4)
 sc.pp.log1p(adata_norm)
 
 # OPTION 1: Test specific genes
+# If the user named specific genes, test ONLY those (set genes_to_test) and skip OPTION 2;
+# pass n_perms only when permutation p-values are actually reported (each permutation is a full pass over the data).
 # genes_to_test = ['GENE1', 'GENE2']  # <-- SET GENES
 # adata_test = adata_norm[:, genes_to_test]
 

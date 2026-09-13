@@ -99,6 +99,8 @@ class SessionSummary(BaseModel):
     data_format: str = "single_slice"
     slices: list[SliceSummary] = Field(default_factory=list)
     rois: list[ROISummary] = Field(default_factory=list)
+    dataset_dir: str | None = None
+    extra_files: list[str] = Field(default_factory=list)  # h5ad files next to the slices that are not slices
 
     @classmethod
     def from_session(cls, session) -> SessionSummary:

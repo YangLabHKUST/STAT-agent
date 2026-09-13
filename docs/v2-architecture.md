@@ -99,6 +99,9 @@ spliced and unspliced layers for RNA velocity) before any code is generated. A c
 runs in unguarded mode, the declared outputs are validated after execution, and the user is offered
 a `SKILL.md` draft that can be installed into the user skills directory.
 
+The matcher returns no match for a request that names a method no skill implements, so the
+method-card route handles it; the generator is asked to state a substitution in its first sentence.
+
 ## Clarification policies and ablation arms
 
 `InteractivePolicy` pauses the turn. `AutoPolicy` answers what can be defaulted (skill defaults,
@@ -134,3 +137,11 @@ data changes, findings, artefacts, the namespace variables each step added and, 
 its code), and the generator sees a listing of the live Python namespace. That namespace is one
 dictionary per session in `Runtime`: variables persist across code blocks, steps and turns, but not
 across a session save and reload, so the generator is told to write final results into the AnnData.
+Across turns the history carries, per turn, one line per step (skill, artefacts, variables, what
+stayed open), the known facts and the clarification answers of the last two turns, which the verifier
+sees as answers already given. The planner receives the same artefact block as the generator, with
+its STALE marks, so a direct answer about earlier results knows what a later change invalidated.
+Artefacts written by a run that failed or was stopped are recorded as stale, never fresh, and a stop
+during a step closes the step through `finish_step` so its handoff and plan status survive. The
+session summary also lists h5ad files that sit next to the slices without being slices (a reference
+dataset), so a prerequisite can be satisfied from them.

@@ -75,12 +75,13 @@ class TurnRecord(BaseModel):
     key_findings: list[str] = Field(default_factory=list)
     handoffs: list[StepHandoff] = Field(default_factory=list)
     assumptions: list[AssumptionRecord] = Field(default_factory=list)
+    answers: list[dict] = Field(default_factory=list)  # clarification Q&A of the turn: kind, question, answer, step, skill
     response: str = ""
     ts: float = Field(default_factory=time.time)
 
     def history_lines(self) -> str:
         """The STAT 0.1 history format: query, assistant summary, execution summary."""
-        lines = [f"**Query:** {self.query}"]
+        lines = [f"**Query:** {self.query}" + (" (stopped by the user before it finished; results below may be partial)" if self.status == "cancelled" else "")]
         summary = self.response_summary or (self.response[:400] if self.response else "")
         if summary:
             lines.append(f"**Assistant:** {summary}")
@@ -90,6 +91,21 @@ class TurnRecord(BaseModel):
             lines.append(f"**Execution:** {execution}" + (f" **Findings:** {findings}" if findings else ""))
         if self.assumptions:
             lines.append("**Assumptions:** " + "; ".join(f"{a.question} -> {a.answer}" for a in self.assumptions[:3]))
+        for h in self.handoffs:
+            # what the summary line does not carry: the skill, the artefacts, the variables, what stayed open
+            bits = []
+            if h.skill:
+                bits.append(f"skill {h.skill}")
+            if h.mode in ("unguarded", "advice", "failed", "skipped", "cancelled"):
+                bits.append(h.mode)
+            if h.outputs:
+                bits.append("outputs " + ", ".join(h.outputs[:8]))
+            if h.variables:
+                bits.append("variables " + ", ".join(h.variables[:8]))
+            if h.unresolved:
+                bits.append("unresolved " + "; ".join(h.unresolved[:2]))
+            if bits:
+                lines.append(f"**Step {h.step_number}:** " + "; ".join(bits))
         return "\n".join(lines)
 
 
@@ -129,6 +145,8 @@ class ConversationMemory(BaseModel):
     def history_text(self, max_turns: int | None = None, char_budget: int = 12000) -> str:
         """Rolling summary (if any) followed by the recent turns in the STAT 0.1 format."""
         blocks: list[str] = []
+        if self.facts:
+            blocks.append("**Known facts:** " + "; ".join(f"{f.key}: {f.value}" for f in list(self.facts.values())[-12:]))
         if self.rolling_summary:
             blocks.append(f"**Earlier in this session:** {self.rolling_summary}")
         for t in self.recent_turns(max_turns):
@@ -142,6 +160,15 @@ class ConversationMemory(BaseModel):
         if not self.facts:
             return ""
         return "\n".join(f"- {f.key}: {f.value}" for f in self.facts.values())
+
+    def recent_answers(self, kind: str = "verifier", n_turns: int = 2) -> list[tuple[str, str]]:
+        """Clarification answers the user gave in the last ``n_turns`` turns (latest answer per question)."""
+        latest: dict[str, str] = {}
+        for t in self.turns[-n_turns:]:
+            for a in t.answers:
+                if a.get("kind") == kind and str(a.get("answer") or "").strip():
+                    latest[a.get("question", "")] = str(a["answer"])
+        return list(latest.items())
 
     def handoffs_text(self, n: int = 3) -> str:
         items: list[str] = []

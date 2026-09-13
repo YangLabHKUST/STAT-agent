@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 
 from stat_agent.agent.policy import Decision, make_policy
-from stat_agent.events.catalogue import TERMINAL_TYPES, EventBase, TurnError
+from stat_agent.events.catalogue import TERMINAL_TYPES, EventBase, TurnCancelled, TurnDone, TurnError
 from stat_agent.web.errors import ApiError
 
 logger = logging.getLogger(__name__)
@@ -126,7 +126,10 @@ class TurnManager:
         turn.cancelling = True
         agent.cancel()
         if turn.state == "awaiting_input":
+            # the graph is parked at an interrupt and will not run again: close the turn on the stream too
             agent.pending = None
+            self._on_event(turn, TurnCancelled(partial=False, ledger_version=agent.ledger.version))
+            self._on_event(turn, TurnDone(state="cancelled", ledger_version=agent.ledger.version, summary={"steps": 0, "status": "cancelled"}, response=""))
             turn.state = "cancelled"
             turn.cancelling = False
             turn.finished_at = time.time()
@@ -151,9 +154,14 @@ class TurnManager:
             d = d.get("decision") or {}
             kind = d.get("kind", "answer")
         if kind == "option":
-            return Decision(prompt_id=d.get("prompt_id"), option_index=int(d.get("index") or 1), source="override" if d.get("source") == "override" else "user")
+            raw = d.get("index")
+            if raw is None or not str(raw).strip().isdigit() or int(raw) < 1:
+                raise ApiError("validation", "the reply names no option (option_index starts at 1)", 400)
+            return Decision(prompt_id=d.get("prompt_id"), option_index=int(raw), source="override" if d.get("source") == "override" else "user")
         if kind == "prerequisites":
             answers = d.get("answers") or {}
+            if not any(str(v or "").strip() for v in answers.values()):
+                raise ApiError("validation", "the reply carries no answers", 400)
             questions = (turn.pending_prompt or {}).get("questions") or []
             # map q1/q2 ids back to question text
             mapped = {}

@@ -26,15 +26,24 @@ The web layer exposes one ordered event log per session. The browser opens a sin
    `execution_issue`, `provenance_update`, `usage`, `step_done`, `turn_done`.
 3. A clarification emits `prompt {prompt_id, kind: planner|verifier|skill_selection, question |
    questions | options}` and the turn state becomes `awaiting_input`. The client answers with
-   `POST /api/turns/{id}/reply {prompt_id, answer | option_index | answers}` (the viewer sends `{prompt_id, kind: answer|option|prerequisites, text|index|answers}`; both are accepted and a reply with neither returns `400`) ``; a mismatched or missing
-   prompt returns `409`. Auto mode emits `assumption` instead and continues.
+   `POST /api/turns/{id}/reply {prompt_id, answer | option_index | answers}` (the viewer sends `{prompt_id, kind: answer|option|prerequisites, text|index|answers}`; both are accepted; a reply with no answer, an option reply without an index or with index 0, and a prerequisites reply whose answers are all empty return `400`); a mismatched or missing
+   prompt returns `409`. Typed text answers every prompt kind (a number picks a skill option). Auto mode answers through its policy: the `prompt` is still
+   emitted, followed by `assumption` and `prompt_answered {source: "auto"}`; a planner question that is not about which data to use and has no
+   default or known fact blocks the turn with `advice`. A verifier or planner that keeps asking is stopped after two re-asks: the step blocks
+   with `advice`, or the turn ends `turn_done {state: "blocked"}`.
 4. `POST /api/turns/{id}/cancel` stops the turn cooperatively: a running code block is interrupted
    (`code_block_done` with error type `Cancelled`) and its diff is still recorded; every stage
    boundary checks the stop flag and an in-flight generation stream is dropped, so at most one
    non-streaming model call completes after the stop. No reflection or analysis runs for a stopped
-   block. The turn ends with `turn_cancelled` followed by `turn_done {state: "cancelled"}`.
+   block. A stop during a step closes that step: `step_done {status: "cancelled"}` and a last `plan_updated`
+   (the step `cancelled`, later steps `skipped`), so the step keeps its memory handoff. The turn ends with
+   `turn_cancelled` followed by `turn_done {state: "cancelled"}`. Cancelling a turn that is waiting for a reply
+   publishes the same two events. Artefacts written by a stopped or failed block are recorded as stale.
 5. Failures end with `turn_error` (a stage crashed) or `turn_done {state: "blocked"}` (a step could
-   not run and a later step depended on it).
+   not run and a later step depended on it, or a clarification could not be settled).
+6. Every event carries `step`, the plan step number, from `step_started` to `step_done` (null for
+   turn-level events). `plan_updated` step statuses are `pending | active | done | failed | blocked |
+   skipped | cancelled`; `step_done.status` uses the same words without `pending` and `active`.
 
 Other events: `method_card`, `unguarded_mode`, `refusal`, `validate_result`,
 `draft_offer` (out-of-registry path), `advice`, `warning`, `error`,

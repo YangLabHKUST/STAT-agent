@@ -22,6 +22,8 @@ source: "generator_user.v1 plus: finish the requested work in this response; the
 
 {% endif %}{% if namespace_block %}{{ namespace_block }}
 
+{% endif %}{% if unguarded_note %}{{ unguarded_note }}
+
 {% endif %}{% if skill_guidance %}================================================================================
 **IMPORTANT: SKILL GUIDANCE PROVIDED**
 ================================================================================

@@ -44,7 +44,9 @@ class BlockResult(BaseModel):
     variables: list[str] = Field(default_factory=list)  # namespace names this block added
 
 
-def assemble_context(segments: list[Segment], results: list[BlockResult], max_output: int = 3000) -> str:
+def assemble_context(segments: list[Segment], results: list[BlockResult], max_output: int = 3000, tail: int = 1500) -> str:
+    """The per-block text/code/output the analyser reads. Long output keeps its head and its tail:
+    the final table or count is what the user asked for and it tends to be printed last."""
     parts: list[str] = []
     idx = 0
     for seg in segments:
@@ -56,8 +58,8 @@ def assemble_context(segments: list[Segment], results: list[BlockResult], max_ou
                 r = results[idx]
                 if r.stdout:
                     out = clean_output(r.stdout)
-                    if len(out) > max_output:
-                        out = out[:max_output] + "\n... (output truncated)"
+                    if len(out) > max_output + tail:
+                        out = out[:max_output] + "\n... (middle of the output omitted; the data in memory is complete) ...\n" + out[-tail:]
                     parts.append(f"**Output:**\n{out}\n")
                 if r.error:
                     parts.append(f"**Error:**\n{r.error}\n")
@@ -86,6 +88,8 @@ class AnalyzerRole(Role):
         step: int | None = None,
     ) -> Analysis:
         context = assemble_context(segments, results)
+        if produced:
+            context += "\n**Artefacts written this step (from the provenance ledger, the ground truth for data_changes):** " + ", ".join(produced) + "\n"
         if incomplete:
             context += "\n**Note:** the code ran without errors, but the step's declared outputs were not produced: " + "; ".join(incomplete) + "\n"
         variables = {

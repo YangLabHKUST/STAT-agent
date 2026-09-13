@@ -83,6 +83,14 @@ def verifier_slice_line(s: SliceSummary, stale: Iterable[str] = ()) -> str:
     return desc
 
 
+def extra_files_lines(summary: SessionSummary) -> list[str]:
+    """Data files that sit next to the loaded slices without being slices (a reference h5ad, say)."""
+    if not summary.extra_files:
+        return []
+    base = summary.dataset_dir or "."
+    return ["", "Other data files in the dataset directory (not loaded as slices; usable as reference data, give the full path):"] + [f"  - {base}/{f}" for f in summary.extra_files]
+
+
 def verifier_session_block(summary: SessionSummary, target_slice_ids: Iterable[int], stale: Iterable[str] = ()) -> str:
     targets = list(target_slice_ids)
     lines = [f"- Total slices: {summary.n_slices}"]
@@ -96,6 +104,7 @@ def verifier_session_block(summary: SessionSummary, target_slice_ids: Iterable[i
         lines.append("Available ROIs on target slices:")
         for r in rois:
             lines.append(f"  - '{r.name}' on slice {r.slice_id} ({r.n_obs:,} cells)")
+    lines += extra_files_lines(summary)
     return "\n".join(lines)
 
 
@@ -104,6 +113,17 @@ def user_responses_block(answers: Iterable[tuple[str, str]]) -> str:
     if not pairs:
         return ""
     out = "\n**Previously Collected Information:**\n"
+    for q, a in pairs:
+        out += f"  Q: {q}\n  A: {a}\n"
+    return out
+
+
+def earlier_responses_block(answers: Iterable[tuple[str, str]]) -> str:
+    """Clarification answers from earlier turns, so the verifier does not ask again."""
+    pairs = list(answers)
+    if not pairs:
+        return ""
+    out = "\n**Answers the user gave in earlier turns (still valid unless the user says otherwise):**\n"
     for q, a in pairs:
         out += f"  Q: {q}\n  A: {a}\n"
     return out
@@ -162,6 +182,7 @@ def generator_session_block(summary: SessionSummary, roi_names: list[str]) -> st
         if prot:
             parts.append(f"- Protein data: {prot[0].n_vars} features, {prot[0].n_obs} cells")
             parts.append(f"  Access: session.get_slice({prot[0].slice_id}).adata")
+    parts += extra_files_lines(summary)
     return "\n".join(parts)
 
 
@@ -245,6 +266,8 @@ __all__ = [
     "interface_block",
     "verifier_session_block",
     "user_responses_block",
+    "earlier_responses_block",
+    "extra_files_lines",
     "generator_session_block",
     "analyzer_session_info",
     "skill_guidance_block",

@@ -198,7 +198,7 @@
 
   async function logout() {
     closeEventStream();
-    stream.lastSeq = 0; stream.generation = null;
+    stream.lastSeq = 0; stream.generation = null; stream.seen = new Set();
     turnUI.turnId = null; turnUI.body = null; turnUI.pendingPrompt = null;
     // Call backend reset to clear memory/session
     try { await api.resetSession(); } catch (_) {}
@@ -1749,8 +1749,8 @@
   async function sendChatMessage(text) {
     if (!text || !text.trim()) return;
     text = text.trim();
-    if (turnUI.pendingPrompt && turnUI.pendingPrompt.kind !== 'skill_selection') {
-      return sendReply({ kind: 'answer', text });
+    if (turnUI.pendingPrompt) {
+      return sendReply({ kind: 'answer', text });  // any pending prompt takes typed text (a number picks an option)
     }
     state.chatStreaming = true;
     updateChatButtons();
@@ -2063,8 +2063,9 @@
     state.chatStreaming = true;
     updateChatButtons();
     try {
-      await api.createTurn({ action: { kind: 'rerun_downstream', artifacts }, mode: state.mode, interface_state: interfaceState() });
-    } catch (e) { state.chatStreaming = false; updateChatButtons(); }
+      const res = await api.createTurn({ action: { kind: 'rerun_downstream', artifacts }, mode: state.mode, interface_state: interfaceState() });
+      if (!res.success) { state.chatStreaming = false; updateChatButtons(); appendSystemNotice(errText(res.error, 'Re-run refused'), 'error'); }
+    } catch (e) { state.chatStreaming = false; updateChatButtons(); appendSystemNotice('Connection error: ' + e.message, 'error'); }
   }
 
   const changes = [];
@@ -2100,7 +2101,7 @@
     if (!turnUI.body) return;
     const steps = ev.steps || [];
     if (steps.length < 2 && !turnUI.planEl) return;
-    const html = steps.map(s => `<li class="plan-step ${s.status === 'active' ? 'active' : ''} ${s.status === 'done' ? 'done' : ''} ${s.status === 'failed' || s.status === 'skipped' ? 'failed' : ''}" data-step="${s.index}"><span class="plan-step-num">${s.index}</span>${escapeHtml(s.description || '')}${s.skill ? ` <span class="tag">${escapeHtml(s.skill)}</span>` : ''}</li>`).join('');
+    const html = steps.map(s => `<li class="plan-step ${s.status === 'active' ? 'active' : ''} ${s.status === 'done' ? 'done' : ''} ${s.status === 'failed' ? 'failed' : ''} ${['skipped', 'blocked', 'cancelled'].includes(s.status) ? s.status : ''}" data-step="${s.index}"><span class="plan-step-num">${s.index}</span>${escapeHtml(s.description || '')}${s.skill ? ` <span class="tag">${escapeHtml(s.skill)}</span>` : ''}</li>`).join('');
     if (!turnUI.planEl) {
       turnUI.body.insertAdjacentHTML('beforeend', `<details class="plan-card" open><summary>Plan (${steps.length} steps)</summary><ol class="plan-steps">${html}</ol></details>`);
       turnUI.planEl = turnUI.body.querySelector('.plan-card:last-of-type');
@@ -2285,10 +2286,10 @@
     const waiting = !!turnUI.pendingPrompt;
     const busy = state.chatStreaming && !waiting;
     document.getElementById('send-btn').classList.toggle('hidden', busy);
-    document.getElementById('abort-btn').classList.toggle('hidden', !state.chatStreaming);
+    document.getElementById('abort-btn').classList.toggle('hidden', !state.chatStreaming && !waiting);
     const input = document.getElementById('chat-input');
     input.disabled = busy;
-    input.placeholder = waiting && turnUI.pendingPrompt.kind !== 'skill_selection' ? 'Type your answer...' : (waiting ? 'Pick an option above...' : 'Ask about your data...');
+    input.placeholder = waiting && turnUI.pendingPrompt.kind !== 'skill_selection' ? 'Type your answer...' : (waiting ? 'Pick an option above or type its number...' : 'Ask about your data...');
   }
 
   // ============================================================

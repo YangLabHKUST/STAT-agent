@@ -29,6 +29,23 @@ def test_turn_steps_block_lists_every_step_and_budgets_code_latest_first():
     assert with_turn_steps("", "") == "" and with_turn_steps("h", "") == "h" and with_turn_steps("h", "s") == "h\n\ns"
 
 
+def test_history_lines_carry_step_details_facts_and_earlier_answers():
+    from stat_agent.memory.state import ConversationMemory, TurnRecord
+
+    h = StepHandoff(step_number=1, skill="mini-annotate", summary="Annotated cells.", outputs=["s0:obs:celltype"], variables=["s"], unresolved=[])
+    rec = TurnRecord(turn_id="t1", index=1, query="annotate", response_summary="Annotated cells.", handoffs=[h], answers=[{"kind": "verifier", "question": "Which tissue?", "answer": "brain cortex"}])
+    text = rec.history_lines()
+    assert "**Step 1:** skill mini-annotate; outputs s0:obs:celltype; variables s" in text
+    mem = ConversationMemory()
+    mem.record_turn(rec)
+    mem.add_fact("species", "human", "t1")
+    assert mem.history_text().startswith("**Known facts:** species: human")
+    assert mem.recent_answers("verifier") == [("Which tissue?", "brain cortex")]
+    mem.record_turn(TurnRecord(turn_id="t2", index=2, query="again", answers=[{"kind": "verifier", "question": "Which tissue?", "answer": "liver"}, {"kind": "verifier", "question": "Empty?", "answer": ""}]))
+    assert mem.recent_answers("verifier") == [("Which tissue?", "liver")]
+    assert mem.recent_answers("verifier", n_turns=1) == [("Which tissue?", "liver")]
+
+
 def test_describe_value_and_namespace_block():
     adata = ad.AnnData(X=np.zeros((5, 3)), obs=pd.DataFrame({"celltype": list("aabbc"), "cluster": [0, 1, 0, 1, 2]}, index=[f"c{i}" for i in range(5)]))
     adata.obsm["X_pca"] = np.zeros((5, 2))

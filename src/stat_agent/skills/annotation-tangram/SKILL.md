@@ -16,7 +16,7 @@ default_skill: false
 schema_version: 2
 version: "2.0"
 consumes: []
-produces: [obs:celltype, obsm:deconv_weights, obsm:tangram_ct_pred, uns:annotation_params]
+produces: [obs:celltype, uns:annotation_params]
 platforms: [linux, macos]
 dependencies:
   python: [tangram-sc, torch]

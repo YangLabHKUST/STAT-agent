@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from stat_agent.core.view import SessionSummary
 from stat_agent.memory.context import (
+    earlier_responses_block,
     history_block,
     user_responses_block,
     verifier_session_block,
@@ -115,6 +116,7 @@ class VerifierRole(Role):
         summary: SessionSummary,
         *,
         answers: list[tuple[str, str]] = (),
+        earlier_answers: list[tuple[str, str]] = (),
         memory: ConversationMemory | None = None,
         stale: list[str] = (),
         skill_name: str | None = None,
@@ -134,7 +136,7 @@ class VerifierRole(Role):
             "skill_slug": contract.slug,
             "prerequisites_list": prereqs,
             "session_block": verifier_session_block(summary, step.target_slice_ids, stale),
-            "user_responses_block": user_responses_block(answers),
+            "user_responses_block": user_responses_block(answers) + earlier_responses_block(earlier_answers),
             "history_block": with_turn_steps(history_block(memory, "verifier"), turn_steps),
         }
         fake_input = {"skill": contract.slug, "query": step.refined_query, "targets": [{"slice_id": s.slice_id, "has_celltype": s.has_celltype, "obs": sorted(s.obs_columns)[:40]} for s in (summary.slice(i) for i in step.target_slice_ids) if s], "answers": list(answers)}

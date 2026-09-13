@@ -5,7 +5,7 @@ from __future__ import annotations
 from langgraph.runtime import Runtime as LGRuntime
 from langgraph.types import Command
 
-from stat_agent.agent.nodes.common import phase
+from stat_agent.agent.nodes.common import mark_step, phase
 from stat_agent.agent.state import Context, TurnState, current_step, memory_of
 from stat_agent.events.catalogue import PlanStepView, PlanUpdated, StepDone, TextEvent, TurnDone
 from stat_agent.memory.state import AssumptionRecord, StepHandoff, TurnRecord
@@ -33,8 +33,12 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
     if status == "running":
         status = "done" if success else "failed"
     response_parts = [current.get("text", "")]
+    ran_ok = any(r.get("success") for r in current.get("results", []) or [])
     if analysis.get("interpretation"):
         response_parts.append("**Analysis:**\n" + analysis["interpretation"])
+    elif ran_ok and analysis.get("response_summary"):
+        # a plain count or lookup has no interpretation: the analyser's summary carries the answer
+        response_parts.append("**Result:** " + analysis["response_summary"])
     if not success and analysis.get("execution_issues", {}).get("explanation"):
         response_parts.append("**Issue:** " + analysis["execution_issues"]["explanation"])
     response = "\n\n".join(p for p in response_parts if p).strip()
@@ -42,14 +46,14 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
         step_number=current.get("step_number", idx + 1),
         description=step.get("description", ""),
         skill=current.get("skill") or ((current.get("contract") or {}).get("method_name")),
-        mode=current.get("mode", "guided") if status != "skipped" else "skipped",
+        mode=status if status in ("skipped", "cancelled") else current.get("mode", "guided"),
         success=success and status == "done",
         inputs=list(current.get("reads", [])),
         outputs=list(current.get("produced", [])),
         summary=analysis.get("response_summary") or (current.get("text", "")[:300]),
         data_changes=analysis.get("data_changes", ""),
         key_findings=list(analysis.get("key_findings", []) or []),
-        unresolved=list(current.get("unmet", []) or ([] if success else [analysis.get("execution_issues", {}).get("explanation") or "step failed"])),
+        unresolved=list(current.get("unmet", []) or ([] if success else [analysis.get("execution_issues", {}).get("explanation") or ("stopped by the user" if status == "cancelled" else "step failed")])),
         parameters={"contract": current.get("contract")} if current.get("contract") else {},
         code_hash=None,
         code=[r.get("code", "") for r in current.get("results", []) if r.get("success")],
@@ -57,19 +61,23 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
         complete_query=current.get("complete_query"),
         response=response,
     )
-    ctx.emit(StepDone(step_id=current.get("step_id", f"s{idx + 1}"), index=idx + 1, status="done" if handoff.success else ("skipped" if status == "skipped" else ("blocked" if status == "blocked" else "failed")), mode=handoff.mode, figures=list(current.get("figures", [])), summary=handoff.summary))
+    shown = "done" if handoff.success else (status if status in ("skipped", "blocked", "cancelled") else "failed")
+    ctx.emit(StepDone(step_id=current.get("step_id", f"s{idx + 1}"), index=idx + 1, status=shown, mode=handoff.mode, figures=list(current.get("figures", [])), summary=handoff.summary))
     statuses = {int(k): v for k, v in (state.get("step_statuses") or {}).items()}
-    statuses[idx] = "done" if handoff.success else ("skipped" if status == "skipped" else "failed")
+    statuses[idx] = shown
     next_idx = idx + 1
     # stop the turn when a later step depends on this failed step; the rest is skipped
     later_dependants = [s for s in plan[next_idx:] if handoff.step_number in s.get("depends_on", [])]
     stop = (not handoff.success) and bool(later_dependants)
-    if stop:
+    if stop or status == "cancelled":
         for j in range(next_idx, len(plan)):
             statuses[j] = "skipped"
     ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="step_done", steps=[PlanStepView(step_id=f"s{i + 1}", index=i + 1, description=s.get("description", ""), status=statuses.get(i) or ("pending" if i >= next_idx else "done"), target_slices=list(s.get("target_slice_ids", [])), depends_on=list(s.get("depends_on", [])), skill=s.get("skill")) for i, s in enumerate(plan)]))
     figures = list(state.get("figures", [])) + list(current.get("figures", []))
+    mark_step(ctx, None)
     update = {"handoffs": [handoff.model_dump()], "figures": figures, "step_index": next_idx, "step_statuses": {str(k): v for k, v in statuses.items()}}
+    if status == "cancelled":
+        return Command(update={**update, "status": "cancelled"}, goto="finish_turn")
     if stop:
         return Command(update={**update, "status": "blocked"}, goto="finish_turn")
     return Command(update=update, goto="select_step")
@@ -77,6 +85,7 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
 
 async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
+    mark_step(ctx, None)
     handoffs = [StepHandoff.model_validate(h) for h in state.get("handoffs", [])]
     status = state.get("status")
     if status in (None, "running"):
@@ -93,6 +102,7 @@ async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
         key_findings=[f for h in handoffs for f in h.key_findings][:6],
         handoffs=handoffs,
         assumptions=[AssumptionRecord.model_validate(a) for a in state.get("assumptions", [])],
+        answers=[dict(a) for a in (state.get("answers") or [])],
         response=response,
     )
     if ctx.ablation.memory:

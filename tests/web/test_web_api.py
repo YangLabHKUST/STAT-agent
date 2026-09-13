@@ -108,6 +108,8 @@ def test_cancel_and_reset(client, dataset_dir):
     wait_state(client, turn_id, {"awaiting_input"})
     c = client.post(f"/api/turns/{turn_id}/cancel")
     assert c.status_code == 202 and c.json()["state"] == "cancelled"
+    frames = client.get(f"/api/turns/{turn_id}/events").json()["events"]
+    assert "turn_cancelled" in [f["type"] for f in frames] and [f for f in frames if f["type"] == "turn_done"][-1]["state"] == "cancelled"
     assert client.post("/api/turns", json={"message": "annotate cell types"}).status_code == 202
     assert client.delete("/api/session").status_code in (200, 409)
     assert client.delete("/api/session", params={"force": "1"}).status_code == 200

@@ -11,6 +11,8 @@ prerequisites:
   - "Tissue type information (e.g., breast cancer, brain cortex)"
 produces:
   - obs:celltype
+defaults:
+  tissue: "brain cortex"
 default_skill: true
 ---
 

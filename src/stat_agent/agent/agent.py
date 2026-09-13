@@ -129,8 +129,9 @@ class Agent:
                 pass
         return fid
 
-    def _context(self, emit, interface: InterfaceState | None) -> Context:
+    def _context(self, emit, interface: InterfaceState | None, emitter=None) -> Context:
         return Context(
+            emitter=emitter,
             session=self.session,
             registry=self.registry,
             runtime=self.runtime,
@@ -279,7 +280,7 @@ class Agent:
         queue: asyncio.Queue = asyncio.Queue()
         emitter = StampingEmitter(MultiEmitter([_QueueEmitter(loop, queue), *self._sinks]), turn_id=turn_id)
         self.llm.emitter = emitter
-        ctx = self._context(emitter.emit, interface)
+        ctx = self._context(emitter.emit, interface, emitter=emitter)
         self._running = True
         self.pending = None
         if first_event is not None:

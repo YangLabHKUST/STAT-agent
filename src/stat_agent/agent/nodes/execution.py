@@ -32,7 +32,12 @@ from stat_agent.skills.schema import MethodCard, SkillFrontmatter
 UNGUARDED_NOTE = (
     "**NOTE: no registered skill covers this request. The method card below is a provisional contract synthesised for an "
     "unregistered method: treat its requirements, outputs and outline as hints, use your own judgement for the implementation, "
-    "state every assumption in your explanation, and label the result as provisional.**"
+    "state every assumption in your explanation, and label the result as provisional. If you implement a different method than "
+    "the one the user named, say so in your first sentence and name what you use instead.**"
+)
+GENERAL_NOTE = (
+    "**NOTE: no registered skill covers this request; proceed with general analysis and state your assumptions. If the request "
+    "names a method or tool you are not using, say so in your first sentence and name what you use instead.**"
 )
 
 
@@ -65,12 +70,12 @@ async def generate_node(state: TurnState, runtime: LGRuntime[Context]):
     guidance = ""
     unguarded_note = ""
     if skill is not None:
-        guidance = GeneratorRole.guidance(skill.name, skill.body)
+        guidance = GeneratorRole.guidance(skill.name, skill.body, [a.id for a in skill.meta.produces])
     elif current.get("contract"):
-        guidance = _card_guidance(MethodCard.model_validate(current["contract"]))
-        unguarded_note = UNGUARDED_NOTE
+        # the card is hints, not a skill body: it is rendered with the note, outside the skill banner
+        unguarded_note = UNGUARDED_NOTE + "\n\n" + _card_guidance(MethodCard.model_validate(current["contract"]))
     elif current.get("mode") == "unguarded":
-        unguarded_note = "**NOTE: no registered skill covers this request; proceed with general analysis and state your assumptions.**"
+        unguarded_note = GENERAL_NOTE
     plan_tuple = (state["query"], current["step_number"], len(plan), step.get("description", "")) if len(plan) > 1 else None
     state_block = ctx.ledger.state_text(current["target_slice_ids"]) if ctx.ablation.provenance else ""
     query = current.get("complete_query") or step.get("refined_query") or state["query"]
@@ -201,6 +206,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     produced: list[str] = list(current.get("produced", []))
     reads: set[str] = set(current.get("reads", []))
     figures: list[str] = list(current.get("figures", []))
+    code_writes: set[str] = set(current.get("code_writes") or []) if continuing else set()  # unqualified kind:key refs the code wrote, on any object
     max_attempts = ctx.ablation.max_reflect_attempts if ctx.ablation.reflector else 0
     query = current.get("query_used") or state["query"]
     phase(ctx, "running")
@@ -232,6 +238,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
             figures += block_figs
 
             step_writes = _code_writes(res)
+            code_writes |= step_writes
             # provenance for every run, successful or not (a failing run may still have mutated state)
             if ctx.ablation.provenance and res.snapshot_before is not None and res.snapshot_after is not None:
                 delta = ctx.ledger.record_step(
@@ -243,6 +250,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                     declared_consumes=[a.id for a in contract.consumes] if contract else (),
                     writes=step_writes,
                     target_slice_ids=current["target_slice_ids"],
+                    outcome="ok" if res.success else ("cancelled" if res.cancelled else "failed"),
                 )
                 if not delta.empty:
                     wrote_anything = True
@@ -321,8 +329,11 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     if all_ok and contract is not None and ctx.ablation.validate_result and contract.produces:
         missing = _missing_outputs(ctx, contract, current["target_slice_ids"], produced, require_produced=ctx.ablation.provenance)
         ctx.emit(ValidateResult(step_id=step_id, passed=not missing, failures=missing))
-    current.update(results=results, produced=produced, reads=sorted(reads), figures=figures)
-    if missing and not continuing and not wrote_anything and not cancelled(ctx):
+    # the code wrote a declared output somewhere (a pooled or subset object, say): the step did its
+    # work on a derived object and is accepted; only an inspection-only step gets a continuation
+    declared_hit = bool(contract is not None and any(w.split(":", 1)[0] == a.kind and a.matches(w.split(":", 1)[1]) for a in contract.produces for w in code_writes if ":" in w))
+    current.update(results=results, produced=produced, reads=sorted(reads), figures=figures, code_writes=sorted(code_writes))
+    if missing and not continuing and not wrote_anything and not declared_hit and not cancelled(ctx):
         # the code ran but wrote nothing (an inspection-only step): one continuation on the live
         # namespace, never a re-run of what already succeeded
         current["continuation"] = {"missing": missing}
@@ -330,7 +341,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     current.pop("continuation", None)
     # a step that wrote something but not its declared outputs (results on a derived object, say) is
     # only noted in the pipeline log; a step that wrote nothing at all is reported as partial
-    current["incomplete"] = missing if (missing and not wrote_anything) else []
+    current["incomplete"] = missing if (missing and not wrote_anything and not declared_hit) else []
     current["success"] = all_ok and not current["incomplete"]
     return Command(update={"current": current}, goto="analyze")
 

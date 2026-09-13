@@ -101,6 +101,7 @@ class Context:
     interface: InterfaceState | None = None
     skill_defaults: dict[str, str] = field(default_factory=dict)
     memory_obj: ConversationMemory | None = None
+    emitter: Any = None  # the stamping emitter behind `emit`, so nodes can set the current plan step
 
     def summary(self) -> SessionSummary:
         return SessionSummary.from_session(self.session)

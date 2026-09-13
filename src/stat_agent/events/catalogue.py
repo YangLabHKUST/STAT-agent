@@ -98,7 +98,7 @@ class PlanStepView(BaseModel):
     step_id: str
     index: int
     description: str
-    status: Literal["pending", "active", "done", "skipped", "failed", "blocked"] = "pending"
+    status: Literal["pending", "active", "done", "skipped", "failed", "blocked", "cancelled"] = "pending"
     skill: str | None = None
     target_slices: list[int] = Field(default_factory=list)
     depends_on: list[int] = Field(default_factory=list)
@@ -124,7 +124,7 @@ class StepDone(EventBase):
     type: Literal["step_done"] = "step_done"
     step_id: str
     index: int
-    status: Literal["done", "failed", "blocked", "skipped"] = "done"
+    status: Literal["done", "failed", "blocked", "skipped", "cancelled"] = "done"
     mode: str | None = None
     figures: list[str] = Field(default_factory=list)
     summary: str | None = None

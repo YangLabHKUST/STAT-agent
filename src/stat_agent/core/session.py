@@ -115,8 +115,11 @@ class SimpleSession:
         for slice_data in loaded.values():
             self.add_slice(slice_data)
         self.initialize_celltype_colors()
+        # h5ad files in subdirectories are not slices (the loader reads the top level only) but they are
+        # often what a prerequisite asks for (a reference dataset); remember them for the roles
+        extra = sorted(str(p.relative_to(dataset_dir)) for p in dataset_dir.rglob("*.h5ad") if p.parent != dataset_dir and len(p.relative_to(dataset_dir).parts) <= 3)
         self.metadata.update(
-            {"dataset_dir": str(dataset_dir), "n_slices": len(self.slices), "slice_ids": self.slice_ids}
+            {"dataset_dir": str(dataset_dir), "n_slices": len(self.slices), "slice_ids": self.slice_ids, "extra_files": extra}
         )
         logger.info("Loaded dataset with %d slice(s): %s", len(self.slices), self.slice_ids)
         return sorted(loaded.keys())
@@ -270,6 +273,8 @@ class SimpleSession:
             "data_levels": self.data_levels,
             "data_format": self.data_format,
             "slices": [self.slices[sid].get_summary() for sid in self.slice_ids],
+            "dataset_dir": self.metadata.get("dataset_dir"),
+            "extra_files": list(self.metadata.get("extra_files") or []),
             "n_rois": len(self.roi_manager),
             "rois": [
                 {

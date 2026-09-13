@@ -395,7 +395,7 @@ class Runtime:
             result.figures = box.get("figures", [])
             before_keys = set(self.namespace)
             for k, v in ns.items():
-                if not k.startswith("__"):
+                if not k.startswith("__") and k not in SEEDED_NAMES:
                     self.namespace[k] = v
             result.namespace_added = sorted(set(self.namespace) - before_keys)
         else:

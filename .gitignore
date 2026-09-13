@@ -79,3 +79,4 @@ tests/skills/
 # STAT v2 session state
 .stat_agent/
 checkpoints.sqlite
+STAT.pptx

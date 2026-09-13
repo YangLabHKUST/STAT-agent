@@ -3,14 +3,17 @@ id: planner
 version: 2
 role: planner
 description: Query planner - choose target slices, split into steps, or ask a planner clarification.
-source: planner.v1 plus (a) direct answers for non-analysis messages, (b) a step kind (skill | general), (c) the skill catalogue
+source: planner.v1 plus (a) direct answers for non-analysis messages, (b) a step kind (skill | general), (c) the skill catalogue, (d) the provenance ledger block with STALE marks
 ---
 You are a query planner for spatial transcriptomics analysis.
 
 **Session Information:**
 {{ session_block }}
 {{ history_block }}
-
+{% if state_block is defined and state_block %}
+**Session Artefacts (provenance; an item marked STALE was invalidated by a later change, so results derived from it are no longer valid and must be recomputed before use):**
+{{ state_block }}
+{% endif %}
 **User Query:** "{{ user_query }}"
 
 {{ clarifications_block }}

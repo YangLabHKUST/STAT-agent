@@ -186,6 +186,7 @@ class ProvenanceLedger:
         writes: Iterable[str] = (),
         target_slice_ids: Iterable[int] = (),
         origin: str = "agent",
+        outcome: str = "ok",
     ) -> LedgerDelta:
         """Record an agent run. ``reads`` are unqualified ``kind:key`` refs from the code
         scan (qualified per target slice); ``roi_reads`` are ROI names; ``declared_consumes``
@@ -214,7 +215,7 @@ class ProvenanceLedger:
         def inputs_for(aid: str) -> list[str]:
             return sorted(c for c in candidates if c != aid and c in before.artifacts and c not in diff.touched)
 
-        return self._apply(diff, after, origin=origin, producer=producer, inputs_for=inputs_for)
+        return self._apply(diff, after, origin=origin, producer=producer, inputs_for=inputs_for, outcome=outcome)
 
     def record_external(self, before: Snapshot, after: Snapshot, origin: str = "gui", label: str | None = None) -> LedgerDelta:
         diff = diff_snapshots(before, after)
@@ -233,7 +234,7 @@ class ProvenanceLedger:
             self.log.append(LedgerEntry(seq=self.version, origin="manual", stale_now=newly))
         return newly
 
-    def _apply(self, diff: SnapshotDiff, after: Snapshot, *, origin: str, producer: StepRef | None, inputs_for) -> LedgerDelta:
+    def _apply(self, diff: SnapshotDiff, after: Snapshot, *, origin: str, producer: StepRef | None, inputs_for, outcome: str = "ok") -> LedgerDelta:
         now = time.time()
         touched = set(diff.touched)
         stale_cleared: list[str] = []
@@ -262,7 +263,16 @@ class ProvenanceLedger:
             if a:
                 a.status, a.version, a.updated_at = "deleted", a.version + 1, now
         reason_src = producer.label or (producer.skill or f"turn {producer.turn_id}") if producer else origin
-        stale_now = self._propagate(set(diff.changed) | set(diff.removed), f"input changed by {reason_src}", exclude=touched)
+        partial: list[str] = []
+        if outcome != "ok":
+            # a run that failed or was stopped may have written part of a result: what it touched is
+            # recorded (the data really changed) but never trusted as fresh
+            reason = "written by a run that was stopped" if outcome == "cancelled" else "written by a run that failed"
+            for aid in list(diff.added) + list(diff.changed):
+                self.artifacts[aid].status, self.artifacts[aid].stale_reason = "stale", reason
+                partial.append(aid)
+            stale_cleared = [aid for aid in stale_cleared if aid not in partial]
+        stale_now = partial + self._propagate(set(diff.changed) | set(diff.removed), f"input changed by {reason_src}", exclude=touched)
         if not (diff.added or diff.changed or diff.removed or stale_now or stale_cleared):
             # nothing happened: no log entry, no version bump (a cancelled or read-only run)
             entry = LedgerEntry(seq=self.version, ts=now, origin=origin, producer=producer)

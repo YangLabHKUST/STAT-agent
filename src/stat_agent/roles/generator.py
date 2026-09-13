@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from collections.abc import AsyncIterator
 from typing import Literal
@@ -14,7 +15,22 @@ from stat_agent.memory.state import ConversationMemory
 from stat_agent.roles.base import Role
 
 _INTERPRET_RE = re.compile(r"__INTERPRET__:\s*(.+?)(?:\n|$)")
-_CODE_RE = re.compile(r"```(?:python|py)\s*\n(.*?)```", re.S)
+_CODE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+.-]*)[ \t]*\n(.*?)```", re.S)
+_PYTHON_TAGS = {"python", "py", "python3", "ipython"}
+
+
+def _is_python_block(tag: str, body: str) -> bool:
+    """A fence tagged python (any case), or an untagged fence whose body parses as Python
+    statements; bash/json/prose fences are left in the surrounding text."""
+    if tag.lower() in _PYTHON_TAGS:
+        return True
+    if tag or not body.strip():
+        return False
+    try:
+        tree = ast.parse(body)
+    except (SyntaxError, ValueError):
+        return False
+    return any(not (isinstance(n, ast.Expr) and isinstance(n.value, (ast.Name, ast.Constant))) for n in tree.body)
 
 
 class Segment(BaseModel):
@@ -48,12 +64,13 @@ def parse_segments(response: str) -> Generation:
     segments: list[Segment] = []
     last = 0
     for cm in _CODE_RE.finditer(response):
+        code = cm.group(2).strip()
+        if not _is_python_block(cm.group(1), code):
+            continue
         text = response[last : cm.start()].strip()
         if text:
             segments.append(Segment(kind="text", content=text))
-        code = cm.group(1).strip()
-        if code:
-            segments.append(Segment(kind="code", content=code))
+        segments.append(Segment(kind="code", content=code))
         last = cm.end()
     tail = response[last:].strip()
     if tail:
@@ -90,7 +107,8 @@ class GeneratorRole(Role):
             "has_data": has_data,
             "state_block": state_block,
             "history_block": history_block(memory, "plain"),
-            "skill_guidance": (unguarded_note + "\n\n" + skill_guidance).strip() if unguarded_note else skill_guidance,
+            "skill_guidance": skill_guidance,
+            "unguarded_note": unguarded_note,
             "continuation_block": continuation,
             "steps_block": turn_steps,
             "namespace_block": namespace,
@@ -111,10 +129,13 @@ class GeneratorRole(Role):
         yield parse_segments("".join(pieces))
 
     @staticmethod
-    def guidance(name: str, body: str, max_chars: int = 25_000) -> str:
+    def guidance(name: str, body: str, produces: list[str] = (), max_chars: int = 25_000) -> str:
         if len(body) > max_chars:
             body = body[:max_chars] + "\n\n[... skill instructions truncated ...]"
-        return skill_guidance_block(name, body)
+        text = skill_guidance_block(name, body)
+        if produces:
+            text += "\n\n**Declared outputs of this skill (write them onto the target slice's AnnData; the step is checked for them):** " + ", ".join(produces)
+        return text
 
 
 __all__ = ["GeneratorRole", "Generation", "Segment", "parse_segments"]

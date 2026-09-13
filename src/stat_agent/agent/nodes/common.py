@@ -104,14 +104,27 @@ def roi_names(ctx: Context) -> list[str]:
     return list(ctx.session.roi_subsets.keys())
 
 
+def mark_step(ctx: Context, step_no: int | None) -> None:
+    """Stamp later events with the plan step (None between steps); also called on resume."""
+    if getattr(ctx, "emitter", None) is not None:
+        ctx.emitter.step = step_no
+
+
 def cancelled(ctx: Context) -> bool:
     return ctx.cancel.is_set()
 
 
 def cancel_turn(ctx: Context, state: TurnState, *, partial: bool | None = None, update: dict | None = None) -> Command:
     """End the turn now: the user pressed stop. Checked at every stage boundary so at most one
-    model call is in flight when the stop lands."""
+    model call is in flight when the stop lands. A step that was under way is closed through
+    ``finish_step`` so it keeps a handoff (its code may have changed the data) and the plan card
+    shows it as cancelled; outside a step the turn ends directly."""
     ctx.emit(TurnCancelled(partial=bool(state.get("handoffs")) if partial is None else partial, ledger_version=ctx.ledger.version))
+    current = dict((update or {}).get("current") or state.get("current") or {})
+    active = bool(current) and current.get("step_number") == state.get("step_index", 0) + 1
+    if active:
+        current["status"] = "cancelled"
+        return Command(update={**(update or {}), "current": current, "status": "cancelled"}, goto="finish_step")
     return Command(update={**(update or {}), "status": "cancelled"}, goto="finish_turn")
 
 

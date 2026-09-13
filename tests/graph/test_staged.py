@@ -32,6 +32,9 @@ def test_single_step_with_verifier_pause_and_resume(registry):
     assert agent.llm.meter.total.llm_calls >= 4  # planner, matcher, verifier x2, generator, analyzer
     exec_lines = [ln.text for e in events2 if e.type == "exec_output" for ln in e.lines]
     assert "annotated 600 cells" in exec_lines
+    # every event of the step carries its number, also after the resume; the turn-level ones do not
+    assert {e.step for e in events2 if e.type in ("prompt_answered", "verify_complete", "code_block_started", "code_block_done", "step_done")} == {1}
+    assert done.step is None
 
 
 def test_auto_mode_records_assumptions_instead_of_pausing(registry):
@@ -102,10 +105,23 @@ def test_skill_selection_prompt_and_option_answer(registry):
     events = asyncio.run(collect(agent.run_turn("ambiguous request")))
     assert [e for e in events if e.type == "prompt"][0].kind == "skill_selection"
     assert agent.is_waiting and agent.pending.kind == "skill_selection" and len(agent.pending.options) == 2
+    second = agent.pending.options[1]["slug"]
     events2 = asyncio.run(collect(agent.resume(Decision(option_index=2))))
     sel = [e for e in events2 if e.type == "skill_selected"][0]
-    assert sel.skill == agent.pending.options[1]["slug"] if agent.pending else True
-    assert events2[-1].type in ("turn_done", "prompt")
+    assert sel.skill == second == "mini-niche"
+    assert events2[-1].type == "turn_done"
+
+
+def test_skill_selection_free_text_must_name_an_option(registry):
+    """'no' is not a choice: the prompt is repeated instead of silently picking annotation."""
+    agent = make_agent(registry, kind="S1_cell_gene")
+    asyncio.run(collect(agent.run_turn("ambiguous request")))
+    assert agent.pending.kind == "skill_selection"
+    events2 = asyncio.run(collect(agent.resume(Decision(answer="no"))))
+    assert not [e for e in events2 if e.type == "skill_selected"]
+    assert [e for e in events2 if e.type == "prompt"] and agent.pending.kind == "skill_selection"
+    events3 = asyncio.run(collect(agent.resume(Decision(answer="niche"))))
+    assert [e for e in events3 if e.type == "skill_selected"][0].skill == "mini-niche"
 
 
 def test_multi_step_dependency_stops_turn_on_failure(registry):
@@ -223,6 +239,13 @@ def test_cancel_during_code_interrupts_it_and_skips_analysis(registry):
     assert done and done[0].success is False and done[0].error.type == "Cancelled"
     assert "analyzer" not in calls and "reflector" not in calls
     assert events[-1].type == "turn_done" and events[-1].state == "cancelled"
+    # the interrupted step is closed properly: a handoff, a step_done, a plan card that says cancelled
+    step = [e for e in events if e.type == "step_done"]
+    assert step and step[0].status == "cancelled" and step[0].mode == "cancelled"
+    assert [e for e in events if e.type == "plan_updated"][-1].steps[0].status == "cancelled"
+    rec = agent.memory.turns[-1]
+    assert rec.status == "cancelled" and rec.handoffs and rec.handoffs[0].success is False and "stopped by the user" in rec.handoffs[0].unresolved[0]
+    assert "stopped by the user" in rec.history_lines()
 
 
 def test_incomplete_step_gets_one_continuation_on_the_live_namespace(registry):
@@ -349,6 +372,156 @@ def test_memory_off_arm_gets_neither_block(registry):
     agent = make_agent(registry, mode="auto", responder=responder, ablation=AblationConfig(memory=False))
     asyncio.run(collect(agent.run_turn("annotate cell types then detect niches")))
     assert len(seen) == 2 and "**Completed steps in this turn" not in seen[1] and "**Python namespace (variables" not in seen[1]
+
+
+def test_planner_sees_stale_artefacts(registry):
+    """A direct answer about earlier results is written with the ledger's STALE marks in view."""
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "planner":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", responder=responder)
+    assert agent.ledger.get("s0:obs:celltype") is not None
+    agent.ledger.mark_stale("s0:obs:celltype", "the reference was replaced")
+    events = asyncio.run(collect(agent.run_turn("what can you do for me?")))
+    assert events[-1].type == "turn_done" and "Session Artefacts" in seen[0] and "celltype (STALE)" in seen[0]
+
+
+def test_result_line_when_the_step_has_no_interpretation(registry):
+    """A plain count has no interpretation: the analyser's summary is rendered as the result."""
+    from tests.graph.conftest import default_responder
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            return "I'll count.\n```python\nprint('Cluster 3 contains 385 spots')\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("describe the data")))
+    assert events[-1].type == "turn_done" and "**Result:** Annotated cells." in events[-1].response
+
+
+def test_verifier_reask_is_capped(registry):
+    """A verifier that keeps asking is stopped after two re-asks; the step blocks with advice."""
+    from tests.graph.conftest import default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "verifier":
+            return json.dumps({"prerequisites_met": False, "missing_prerequisites": ["tissue"], "can_obtain_by_chat": True, "clarification_questions": ["What type of tissue is this?"]})
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    assert calls.count("verifier") == 3 and "generator" not in calls
+    assert [e for e in events if e.type == "advice"] and [e for e in events if e.type == "step_done"][0].status == "blocked"
+    assert events[-1].type == "turn_done" and events[-1].state == "blocked"
+
+
+def test_planner_reask_is_capped(registry):
+    from tests.graph.conftest import default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "planner":
+            return json.dumps({"needs_clarification": True, "clarification_question": "Which slice would you like to analyze?"})
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S3_two_slice_gene", mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("annotate")))
+    assert calls.count("planner") == 3 and events[-1].type == "turn_done" and events[-1].state == "blocked"
+    assert [e for e in events if e.type == "advice"] and agent.memory.turns[-1].status == "blocked"
+
+
+def test_unguarded_note_is_outside_the_skill_banner(registry):
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "generator":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    asyncio.run(collect(agent.run_turn("describe the data")))
+    asyncio.run(collect(agent.run_turn("annotate cell types")))
+    general, skill = seen
+    assert "no registered skill covers this request" in general and "SKILL GUIDANCE PROVIDED" not in general
+    assert "SKILL GUIDANCE PROVIDED" in skill and "no registered skill" not in skill
+    assert "**Declared outputs of this skill" in skill and "obs:celltype" in skill  # SK3
+
+
+def test_auto_mode_blocks_on_a_planner_question_it_cannot_answer(registry):
+    from tests.graph.conftest import default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "planner":
+            return json.dumps({"needs_clarification": True, "clarification_question": "Should I use raw counts or the normalised matrix?"})
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, kind="S1_cell_gene", mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("compare something")))
+    assert calls.count("planner") == 1 and events[-1].type == "turn_done" and events[-1].state == "blocked"
+    assert not [e for e in events if e.type == "assumption"] and [e for e in events if e.type == "advice"]
+
+
+def test_skill_defaults_reach_the_auto_policy(registry):
+    """mini-annotate declares defaults: tissue; auto mode answers the tissue question from it."""
+    agent = make_agent(registry, mode="auto")
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    a = [e for e in events if e.type == "assumption"][0]
+    assert a.chosen == "brain cortex" and "skill default" in a.rationale
+
+
+def test_verifier_sees_answers_from_earlier_turns(registry):
+    from tests.graph.conftest import _prompt, default_responder
+
+    seen: list[str] = []
+
+    def responder(role, messages, schema):
+        if role == "verifier":
+            seen.append(_prompt(messages))
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, responder=responder)
+    asyncio.run(collect(agent.run_turn("annotate cell types")))
+    asyncio.run(collect(agent.resume(Decision(answers={agent.pending.questions[0]: "mouse liver"}))))
+    asyncio.run(collect(agent.run_turn("annotate cell types")))
+    assert "earlier turns" not in seen[0]
+    assert "Answers the user gave in earlier turns" in seen[-1] and "mouse liver" in seen[-1]
+
+
+def test_results_on_a_derived_object_are_accepted_without_continuation(registry):
+    """The skill declares obs:celltype; the code writes it onto a copy: no continuation, no partial verdict."""
+    from tests.graph.conftest import default_responder
+
+    calls: list[str] = []
+
+    def responder(role, messages, schema):
+        calls.append(role)
+        if role == "generator":
+            return "Working on a copy.\n```python\ntmp = session.get_slice(0).adata.copy()\ntmp.obs['celltype'] = 'T cell'\nprint('labelled the copy')\n```"
+        return default_responder(role, messages, schema)
+
+    agent = make_agent(registry, mode="auto", responder=responder)
+    events = asyncio.run(collect(agent.run_turn("annotate cell types")))
+    assert calls.count("generator") == 1
+    assert [e for e in events if e.type == "validate_result"][0].passed is False  # the log still says what is missing on the slice
+    assert not [e for e in events if e.type == "execution_issue"]
+    assert [e for e in events if e.type == "step_done"][0].status == "done" and events[-1].state == "done"
 
 
 def test_failed_step_stays_failed_in_the_plan_view(registry):

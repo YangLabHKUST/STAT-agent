@@ -108,10 +108,17 @@ class AutoPolicy(ClarificationPolicy):
         defaults = dict(getattr(ctx, "skill_defaults", {}) or {})
         facts = {k: v.value for k, v in getattr(getattr(ctx, "memory", None), "facts", {}).items()} if getattr(ctx, "memory", None) else {}
         if pending.kind == "planner":
-            summary = _summary_of(ctx)
-            ids = list(summary.slice_ids) if summary else []
-            answer = f"slice {ids[0]}" if len(ids) == 1 else ("all slices" if ids else "slice 0")
-            return Decision(prompt_id=pending.prompt_id, kind="planner", answer=answer, source="auto", rationale="auto mode: use every loaded slice" if len(ids) != 1 else "auto mode: the only loaded slice")
+            question = pending.question or ""
+            if any(w in question.lower() for w in ("slice", "section", "sample", "tissue", "dataset", "which data")):
+                summary = _summary_of(ctx)
+                ids = list(summary.slice_ids) if summary else []
+                answer = f"slice {ids[0]}" if len(ids) == 1 else ("all slices" if ids else "slice 0")
+                return Decision(prompt_id=pending.prompt_id, kind="planner", answer=answer, source="auto", rationale="auto mode: use every loaded slice" if len(ids) != 1 else "auto mode: the only loaded slice")
+            # any other planner question (parameters, method choices) is answered from defaults and facts or not at all
+            val, _src, why = self._answer_question(question, ctx, defaults, facts)
+            if val is None:
+                return Decision(prompt_id=pending.prompt_id, kind="planner", answer="", source="auto", unresolvable=[question or "clarification"], rationale="auto mode: no default or known fact answers this question")
+            return Decision(prompt_id=pending.prompt_id, kind="planner", answer=val, source="auto", rationale=f"auto mode: {why}")
         if pending.kind == "skill_selection":
             return Decision(prompt_id=pending.prompt_id, kind="skill_selection", option_index=1, source="auto", rationale="auto mode: first-ranked skill")
         answers: dict[str, str] = {}
