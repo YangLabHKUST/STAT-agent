@@ -151,7 +151,11 @@ across a session save and reload, so the generator is told to write final result
 Across turns the history carries, per turn, one line per step (skill, artefacts, variables, what
 stayed open), the known facts and the clarification answers of the last two turns, which the verifier
 sees as answers already given. The planner receives the same artefact block as the generator, with
-its STALE marks, so a direct answer about earlier results knows what a later change invalidated.
+its STALE marks, their recorded reasons and each artefact's producer (skill or code and turn, or the
+viewer edit), so a direct answer about earlier results knows what a later change invalidated, why, and
+which step produced what; a viewer change the user reports is checked against the record before it is
+accepted. Standing instructions are only those the user stated as general, kept in the user's words; a
+restated instruction updates its existing fact rather than adding a key.
 Artefacts written by a run that failed or was stopped are recorded as stale, never fresh, and a stop
 during a step closes the step through `finish_step` so its handoff and plan status survive. Only the
 snapshot diff decides what changed: a key the code assigned without changing the slice's values (a

@@ -22,8 +22,17 @@ def planner_slice_line(s: SliceSummary) -> str:
     return desc + ")"
 
 
-def planner_session_block(summary: SessionSummary) -> str:
-    lines = [f"- Total slices: {summary.n_slices}"] + [planner_slice_line(s) for s in summary.slices]
+def planner_session_block(summary: SessionSummary, celltype_names: int = 40) -> str:
+    """The planner's view of the session. The cell-type names of each slice are listed (up to
+    ``celltype_names``) so a direct answer can check a viewer change the user reports, such as a
+    rename, against the current labels instead of taking it on trust."""
+    lines = [f"- Total slices: {summary.n_slices}"]
+    for s in summary.slices:
+        lines.append(planner_slice_line(s))
+        if s.has_celltype and s.celltypes and celltype_names:
+            names = [str(n) for n in s.celltypes]
+            shown = ", ".join(names[:celltype_names]) + (f" (+{len(names) - celltype_names} more)" if len(names) > celltype_names else "")
+            lines.append(f"    cell types: {shown}")
     if summary.rois:
         lines.append("")
         lines.append("Available ROIs:")

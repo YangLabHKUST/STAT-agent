@@ -283,3 +283,33 @@ def test_waiting_for_the_session_lock_does_not_block_other_requests(client, data
     holder.join()
     assert r.status_code == 200 and dt < 0.15, dt
     assert codes == [409, 409, 409]
+
+
+def test_celltype_rename_merges_into_an_existing_name_and_refuses_unknown_names(client, tmp_path):
+    """Fourth robustness run F11: renaming onto an existing cell type merges the cells into it (the
+    old label disappears, the target keeps its colour), a plain rename still relabels, an unknown
+    name is 404, an empty name 400, and the same name changes nothing."""
+    from tests.fixtures.sessions import make_session, write_dataset
+
+    init_session(client, write_dataset(make_session("S1_cell_gene"), tmp_path / "ds_ct"))
+    s = client.app.state.stat.session.get_slice(0)
+    before = s.adata.obs["celltype"].value_counts()
+    n_t, n_b, n_cells = int(before["T cell"]), int(before["B cell"]), len(s.adata.obs)
+    colors_before = dict(s.get_celltype_colors() or {})
+    r = client.patch("/api/slices/0/celltypes/T cell", json={"new_name": "B cell"})
+    assert r.status_code == 200, r.text
+    ev = r.json()["provenance_update"]
+    assert ev["origin"] == "gui" and ev["summary"]["celltypes_updated"] == [0] and ev["producer"]["label"] == "celltype_rename 'T cell' -> 'B cell'"
+    col = s.adata.obs["celltype"]
+    assert "T cell" not in list(col.cat.categories) and int(col.value_counts()["B cell"]) == n_t + n_b and len(col) == n_cells
+    colors_after = s.get_celltype_colors() or {}
+    if "B cell" in colors_before:
+        assert colors_after.get("B cell") == colors_before["B cell"] and "T cell" not in colors_after
+    assert client.patch("/api/slices/0/celltypes/Tumor", json={"new_name": "Cancer"}).status_code == 200
+    col = s.adata.obs["celltype"]
+    assert "Cancer" in list(col.cat.categories) and "Tumor" not in list(col.cat.categories) and int(col.value_counts()["Cancer"]) == int(before["Tumor"])
+    assert client.patch("/api/slices/0/celltypes/T cell", json={"new_name": "X"}).status_code == 404
+    assert client.patch("/api/slices/0/celltypes/Nope", json={"new_name": "X"}).status_code == 404
+    assert client.patch("/api/slices/0/celltypes/B cell", json={"new_name": "  "}).status_code == 400
+    assert client.patch("/api/slices/0/celltypes/B cell", json={"new_name": "B cell"}).status_code == 200
+    assert list(s.adata.obs["celltype"].cat.categories) == list(col.cat.categories) and len(s.adata.obs) == n_cells

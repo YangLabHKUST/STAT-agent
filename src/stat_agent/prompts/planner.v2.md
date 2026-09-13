@@ -11,7 +11,7 @@ You are a query planner for spatial transcriptomics analysis.
 {{ session_block }}
 {{ history_block }}
 {% if state_block is defined and state_block %}
-**Session Artefacts (provenance; an item marked STALE was invalidated by a later change, so results derived from it are no longer valid and must be recomputed before use):**
+**Session Artefacts (provenance: each item names the step or viewer edit that produced it; an item marked STALE was invalidated by a later change, with the recorded reason, so results derived from it are no longer valid and must be recomputed before use):**
 {{ state_block }}
 {% endif %}
 **User Query:** "{{ user_query }}"
@@ -45,6 +45,7 @@ NOTE: If the analysis or process is asked for multiple slices, and can be perfor
 **Two more decisions:**
 - If the message is NOT a request to analyse the data (a greeting, a question about what you can do or which methods are available, a question about how to phrase a request, a thank-you), do NOT plan steps and do NOT ask a clarification: answer it directly in "direct_answer" (two to six sentences; mention the relevant skills from the list above by what they do).
   Never use "direct_answer" to decline or discourage an analysis request: if a requested analysis looks infeasible with the loaded data, still plan it as a step; the verifier decides and reports what is missing.
+- If the message asks what is out of date, what a change invalidated, whether an earlier result is still valid, or which step produced a result, answer it directly from the Session Artefacts block: the STALE marks, their recorded reasons and the recorded producers are the record of what happened, and your answer must agree with them. Never say an artefact is unaffected by a change when its recorded reason names that change, never call an artefact without a STALE mark out of date, and attribute each result to the producer recorded next to it, not to your recollection. When the user says they changed something in the viewer (renamed or deleted a cell type or an ROI, drew an ROI), verify it against the record before answering: a cell-type rename is real only when the old name is absent from that slice's cell-type list and the new name is present, and a viewer edit recorded in the artefact block names the exact change it made (for example `viewer celltype_rename 'Stromal' -> 'CAF'`). If the record shows no such change, say that it does not appear in the session and answer from what the record does show.
 - For every step set "kind": use "skill" only when the step asks for the analysis of one of the registered skills listed above (cell type annotation, niche detection, deconvolution, spatial domains, differential expression, pathway or gene-set enrichment, spatially variable genes, cell-cell communication, integration, alignment or registration, trajectory, spatial statistics) or names a specific algorithm, tool or package (for example scVelo, CellChat, Cox regression); use "general" for everything else, including custom workflows assembled from standard operations (subsetting, pooling slices, normalisation, clustering, plotting, comparisons, summaries, counts) and any request that does not name a method.
 
 **Output Format (JSON):**

@@ -97,10 +97,17 @@ async def rename_celltype(request: Request):
     old = request.path_params["name"]
     if not s.has_celltype():
         raise ApiError("not_found", "slice has no celltype column", 404)
+    new_name = body.new_name.strip()
+    if not new_name:
+        raise ApiError("validation", "new_name is empty", 400)
     try:
-        res = await in_thread(app.mutator.rename_celltype, s.slice_id, old, body.new_name)
+        res = await in_thread(app.mutator.rename_celltype, s.slice_id, old, new_name)
     except SessionBusy as exc:
         raise _busy(exc) from exc
+    except KeyError as exc:
+        raise ApiError("not_found", f"cell type {old!r} is not on slice {s.slice_id}", 404) from exc
+    except (ValueError, TypeError) as exc:
+        raise ApiError("validation", f"cannot rename {old!r} to {new_name!r}: {exc}", 400) from exc
     return json({"success": True, "provenance_update": res.event.model_dump(mode="json") if res.event else None}, headers=ledger_headers(app))
 
 

@@ -6,10 +6,19 @@ state, be checkpointed, and be persisted to ``memory.json`` next to the session.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+_INSTRUCTION_STOPWORDS = frozenset({"a", "an", "and", "or", "the", "to", "of", "on", "in", "is", "are", "be", "it", "its", "itself", "themselves", "them", "please"})
+
+
+def _instruction_words(text: str) -> tuple[str, ...]:
+    """The content words of an instruction, so that "do not touch/modify slice 1 - work on copies" and
+    "Do not touch or modify slice 1: work on copies" are recognised as the same instruction."""
+    return tuple(w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in _INSTRUCTION_STOPWORDS)
 
 
 class Fact(BaseModel):
@@ -123,6 +132,14 @@ class ConversationMemory(BaseModel):
     def add_fact(self, key: str, value: str, source_turn: str | None = None, confidence: float = 1.0) -> None:
         if not key or value is None:
             return
+        if key.lower().startswith("instruction:"):
+            # the summariser restates every standing instruction each time it runs, usually under a
+            # new key; the same wording is the same fact, so it updates that entry instead of piling up
+            words = _instruction_words(str(value))
+            same = next((k for k, f in self.facts.items() if k.lower().startswith("instruction:") and _instruction_words(f.value) == words), None) if words else None
+            if same is not None:
+                key = same
+                del self.facts[key]  # re-inserted at the end: a restated instruction stays recent
         self.facts[key] = Fact(key=key, value=str(value), source_turn=source_turn, confidence=confidence)
 
     @property

@@ -109,3 +109,11 @@ def test_summarizer_prompt_scales_with_the_turns_it_covers():
     p = load_prompt("summarizer")
     text = p.render(previous_summary="(none)", evicted_turns_block="**Query:** q", max_words=310)
     assert "At most 310 words" in text and "superseded" in text and '"instruction:"' in text
+    assert "is not standing" in text and "Never record the assistant's own refusals" in text and "never paraphrase" in text
+
+
+def test_planner_prompt_grounds_provenance_answers_in_the_record():
+    p = load_prompt("planner")
+    text = p.render(session_block="- Total slices: 2", history_block="", user_query="what is out of date?", clarifications_block="", state_block="Slice 0:\n  obs: celltype")
+    assert "recorded reasons" in text and "never call an artefact without a STALE mark out of date" in text
+    assert "If the record shows no such change, say that it does not appear in the session" in text

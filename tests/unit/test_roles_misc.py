@@ -58,7 +58,8 @@ def test_failed_run_marks_its_writes_stale():
     delta = ledger.record_step(before, take_snapshot(session), producer=StepRef(turn_id="t1", step=1, skill="mini-annotate"), writes=["obs:half_done"], target_slice_ids=[0], outcome="failed")
     art = ledger.get("s0:obs:half_done")
     assert art is not None and art.status == "stale" and "failed" in (art.stale_reason or "")
-    assert "s0:obs:half_done" in delta.entry.stale_now and "half_done (STALE)" in ledger.state_text([0])
+    text = ledger.state_text([0])
+    assert "s0:obs:half_done" in delta.entry.stale_now and "half_done (STALE: written by a run that failed) <- mini-annotate, turn t1" in text
     # a successful re-run of the same column clears it
     before = take_snapshot(session)
     session.get_slice(0).adata.obs["half_done"] = 2
@@ -219,3 +220,27 @@ def test_llm_backend_shim_runs_on_the_client():
     assert seen[0][0] == "skill" and seen[0][1] == [("SystemMessage", "Respond with JSON."), ("HumanMessage", "name the clusters")]
     with pytest.raises(ValueError):
         LLMBackend()
+
+
+def test_state_text_names_producers_and_viewer_edits():
+    """The artefact block given to the roles names each artefact's producer (skill or code and the
+    turn, or the viewer edit) and the recorded stale reason, so a direct answer about what is out of
+    date or who produced a result has the record in front of it."""
+    from tests.fixtures.sessions import make_session
+
+    from stat_agent.ledger.provenance import ProvenanceLedger, StepRef
+    from stat_agent.runtime import take_snapshot
+
+    session = make_session("S1_cell_gene")
+    ledger = ProvenanceLedger()
+    ledger.initialize(take_snapshot(session))
+    before = take_snapshot(session)
+    a = session.get_slice(0).adata
+    a.obs["score"] = a.obs["celltype"].cat.codes.astype(float)
+    ledger.record_step(before, take_snapshot(session), producer=StepRef(turn_id="t3", step=2), reads=["obs:celltype"], writes=["obs:score"], target_slice_ids=[0])
+    before = take_snapshot(session)
+    a.obs["celltype"] = a.obs["celltype"].cat.rename_categories({"Tumor": "Cancer"})
+    ledger.record_external(before, take_snapshot(session), label="celltype_rename")
+    text = ledger.state_text([0])
+    assert "celltype <- viewer celltype_rename" in text
+    assert "score (STALE: input changed by celltype_rename (s0:obs:celltype)) <- code, turn t3" in text

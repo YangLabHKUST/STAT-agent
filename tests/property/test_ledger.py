@@ -71,7 +71,7 @@ def test_state_text_and_persistence(tmp_path):
     led.initialize(take_snapshot(s))
     led.mark_stale("s0:obsm:deconv_weights", "test")
     text = led.state_text([0])
-    assert "Slice 0:" in text and "deconv_weights (STALE)" in text
+    assert "Slice 0:" in text and "deconv_weights (STALE: test)" in text
     led.save(tmp_path / "ledger.json")
     back = ProvenanceLedger.load(tmp_path / "ledger.json")
     assert back.consistency_hash() == led.consistency_hash() and back.version == led.version

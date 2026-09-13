@@ -312,7 +312,9 @@ class ProvenanceLedger:
 
     # ---- rendering -------------------------------------------------------------------------------------------
     def state_text(self, slice_ids: Iterable[int] | None = None, max_keys: int = 25) -> str:
-        """Compact per-slice inventory for prompts, stale artefacts flagged."""
+        """Compact per-slice inventory for prompts: every artefact with its producer (skill or code
+        and the turn, or the viewer edit) and, when stale, the recorded reason, so a role answering
+        "what is out of date and why" or "which step produced this" has the record in front of it."""
         ids = set(slice_ids) if slice_ids is not None else None
         by_slice: dict[int | None, dict[str, list[str]]] = {}
         for a in self.artifacts.values():
@@ -320,8 +322,12 @@ class ProvenanceLedger:
                 continue
             if ids is not None and a.slice_id is not None and a.slice_id not in ids:
                 continue
-            tag = " (STALE)" if a.status == "stale" else ""
-            src = f" <- {a.produced_by.skill}" if a.produced_by and a.produced_by.skill else ""
+            tag = f" (STALE: {a.stale_reason})" if a.status == "stale" and a.stale_reason else (" (STALE)" if a.status == "stale" else "")
+            src = ""
+            if a.produced_by is not None:
+                p = a.produced_by
+                who = p.skill or (f"viewer {p.label}" if p.mode == "external" and p.label else p.label or "code")
+                src = f" <- {who}" + (f", turn {p.turn_id}" if p.turn_id else "")
             by_slice.setdefault(a.slice_id, {}).setdefault(a.kind, []).append(f"{a.key}{tag}{src}")
         lines: list[str] = []
         for sid in sorted(k for k in by_slice if k is not None):

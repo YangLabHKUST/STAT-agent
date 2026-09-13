@@ -93,3 +93,39 @@ def test_memory_window_facts_and_summary_word_budget():
         mem.add_fact(f"k{k}", str(k), "t8")
     text = mem.history_text()
     assert "k6: 6" in text and "k5: 5" not in text
+
+
+def test_instruction_facts_are_merged_by_wording():
+    """The summariser restates every standing instruction each time it runs, usually under a fresh
+    key: the same wording updates the existing entry (keeping the first key), a different scope
+    stays a separate fact, and other facts are untouched."""
+    from stat_agent.memory.state import ConversationMemory
+
+    mem = ConversationMemory()
+    mem.add_fact("instruction: slices", "do not touch/modify slice 1 — work on copies", "t8")
+    mem.add_fact("instruction: slice1_slice2", "Do not touch or modify slice 1: work on copies.", "t9")
+    mem.add_fact("instruction: slice 1 and 2", "do not touch/modify slice 1 or slice 2 themselves — work on copies", "t9")
+    mem.add_fact("species", "human", "t9")
+    mem.add_fact("species", "mouse", "t10")
+    assert [k for k in mem.facts if k.startswith("instruction:")] == ["instruction: slices", "instruction: slice 1 and 2"]
+    merged = mem.facts["instruction: slices"]
+    assert merged.value == "Do not touch or modify slice 1: work on copies." and merged.source_turn == "t9"
+    assert list(mem.facts) == ["instruction: slices", "instruction: slice 1 and 2", "species"] and mem.facts["species"].value == "mouse"
+    mem.add_fact("instruction: copies", "do not touch/modify slice 1 - work on copies", "t11")  # restated later: same fact, now the most recent
+    assert list(mem.facts) == ["instruction: slice 1 and 2", "species", "instruction: slices"] and mem.facts["instruction: slices"].source_turn == "t11"
+
+
+def test_planner_session_block_lists_the_cell_type_names():
+    """The planner answers directly about viewer edits, so its session block names the current cell
+    types of each slice (capped), letting it check a reported rename against the record."""
+    from tests.fixtures.sessions import make_session
+
+    from stat_agent.core.view import SessionSummary
+    from stat_agent.memory.context import planner_session_block
+
+    summary = SessionSummary.from_session(make_session("S1_cell_gene"))
+    text = planner_session_block(summary)
+    assert "- Total slices: 1" in text and "    cell types: B cell, Fibroblast, T cell, Tumor" in text
+    assert "cell types:" not in planner_session_block(SessionSummary.from_session(make_session("S1_cell_gene_noCT")))
+    capped = planner_session_block(summary, celltype_names=2)
+    assert "cell types: B cell, Fibroblast (+2 more)" in capped

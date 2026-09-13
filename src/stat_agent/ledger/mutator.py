@@ -73,17 +73,29 @@ class SessionMutator:
         return m
 
     def rename_celltype(self, slice_id: int, old: str, new: str) -> MutationResult:
-        with self.mutation("celltype_rename") as m:
+        """Rename the cell type ``old`` on one slice. When ``new`` is already a cell type there, the
+        cells labelled ``old`` are merged into it (the old label disappears and the target keeps its
+        colour). ``old`` must exist: otherwise a KeyError is raised under the lock and nothing is
+        changed, recorded or emitted."""
+        with self.mutation(f"celltype_rename {old!r} -> {new!r}") as m:  # the label is the recorded reason: it names the change
             s = self.session.get_slice(slice_id)
             col = s.adata.obs["celltype"]
-            if hasattr(col, "cat"):
-                s.adata.obs["celltype"] = col.cat.rename_categories({old: new}) if old in col.cat.categories else col
-            else:
-                s.adata.obs["celltype"] = col.replace({old: new})
-            colors = s.get_celltype_colors() or {}
-            if old in colors:
-                colors[new] = colors.pop(old)
-                s.set_celltype_colors(colors)
+            present = set(s.celltypes) | (set(col.cat.categories) if hasattr(col, "cat") else set())
+            if old not in present:
+                raise KeyError(old)
+            if new != old:
+                if hasattr(col, "cat"):
+                    if new in col.cat.categories:  # merge: relabel the cells, then drop the old category
+                        s.adata.obs["celltype"] = col.where(col != old, new).cat.remove_categories([old])
+                    else:
+                        s.adata.obs["celltype"] = col.cat.rename_categories({old: new})
+                else:
+                    s.adata.obs["celltype"] = col.replace({old: new})
+                colors = s.get_celltype_colors() or {}
+                if old in colors:
+                    color = colors.pop(old)
+                    colors.setdefault(new, color)  # a merge keeps the target's colour
+                    s.set_celltype_colors(colors)
             m.value = new
         return m
 

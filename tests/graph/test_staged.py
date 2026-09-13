@@ -389,7 +389,7 @@ def test_planner_sees_stale_artefacts(registry):
     assert agent.ledger.get("s0:obs:celltype") is not None
     agent.ledger.mark_stale("s0:obs:celltype", "the reference was replaced")
     events = asyncio.run(collect(agent.run_turn("what can you do for me?")))
-    assert events[-1].type == "turn_done" and "Session Artefacts" in seen[0] and "celltype (STALE)" in seen[0]
+    assert events[-1].type == "turn_done" and "Session Artefacts" in seen[0] and "celltype (STALE: the reference was replaced)" in seen[0]
 
 
 def test_result_line_when_the_step_has_no_interpretation(registry):
