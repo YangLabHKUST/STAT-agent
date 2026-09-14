@@ -19,7 +19,10 @@ The web layer exposes one ordered event log per session. The browser opens a sin
 ## Turn lifecycle
 
 1. `POST /api/turns {message, mode?, interface_state?}` returns `202 {turn_id}` or `409` when a turn
-   is active. `{action: "rerun_downstream", ids: [...]}` re-runs the producers of stale artefacts.
+   is active. `GET /api/turns/{id}` reports the lifecycle `state` (`queued | running | awaiting_input |
+   done | error | cancelled`) and, once finished, `outcome`, the `turn_done.state` (`done | blocked |
+   cancelled`, `error` after `turn_error`), so a client need not read the event log to tell a blocked
+   turn from a completed one. `{action: "rerun_downstream", ids: [...]}` re-runs the producers of stale artefacts.
 2. Events: `turn_started`, `phase`, `plan_updated`, `step_started`, `filter_complete`,
    `match_complete`, `skill_selected`, `verify_complete`, `text` / `text_delta`,
    `code_block_started`, `exec_output`, `code_block_done`, `figure`, `reflection`,

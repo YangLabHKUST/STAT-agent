@@ -308,6 +308,10 @@ class Runtime:
             violations = check_code(code, allowed_write_dirs=allowed)
             if violations:
                 result.violations = violations
+                if all(v.code == "syntax_error" for v in violations):
+                    # code that does not parse is a generation error the reflector can fix, not a refusal
+                    result.error, result.error_type = "; ".join(str(v) for v in violations), "SyntaxError"
+                    return result
                 result.error = "SafetyViolation: " + "; ".join(str(v) for v in violations)
                 result.error_type, result.refused = "SafetyViolation", True
                 return result

@@ -75,7 +75,7 @@ def test_turn_prompt_reply_and_replay(client, dataset_dir):
     ok = client.post(f"/api/turns/{turn_id}/reply", json={"prompt_id": snap["pending_prompt_id"], "kind": "prerequisites", "answers": {"q1": "brain"}})
     assert ok.status_code == 202
     done = wait_state(client, turn_id, {"done", "error"})
-    assert done["state"] == "done" and "annotate" in done["response"].lower()
+    assert done["state"] == "done" and done["outcome"] == "done" and "annotate" in done["response"].lower()
     frames = client.get(f"/api/turns/{turn_id}/events").json()["events"]
     types = [f["type"] for f in frames]
     assert types[0] == "turn_started" and "prompt" in types and "prompt_answered" in types and "provenance_update" in types and types[-1] == "turn_done"

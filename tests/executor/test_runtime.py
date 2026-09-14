@@ -76,6 +76,11 @@ def test_safety_table(code, blocked):
     assert bool(check_code(code, allowed_write_dirs=["/tmp/stat-work"])) is blocked
 
 
+def test_a_syntax_error_is_an_error_to_reflect_on_not_a_refusal(rt):
+    r = rt.run("print('unterminated")
+    assert not r.success and not r.refused and r.error_type == "SyntaxError" and "SyntaxError" in r.error
+
+
 def test_safety_refuses_before_running(rt):
     r = rt.run("import os\nos.system('echo hi')")
     assert r.refused and not r.success and r.error_type == "SafetyViolation" and r.violations

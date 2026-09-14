@@ -26,6 +26,7 @@ class Turn:
     client_turn_id: str | None = None
     state: str = "queued"
     terminal: str | None = None  # terminal event seen; applied to `state` only after the agent finished
+    outcome: str | None = None  # turn_done.state (done | blocked | cancelled), error for turn_error; None while the turn runs
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
     pending_prompt: dict | None = None
@@ -45,6 +46,7 @@ class Turn:
             "mode": self.mode,
             "driver": self.driver,
             "state": self.state,
+            "outcome": self.outcome,
             "cancelling": self.cancelling,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
@@ -224,6 +226,7 @@ class TurnManager:
             turn.figures.append(ev.figure_id)
         elif t in TERMINAL_TYPES:
             turn.terminal = {"turn_done": "done", "turn_error": "error", "turn_cancelled": "cancelled"}[t]
+            turn.outcome = getattr(ev, "state", None) if t == "turn_done" else turn.terminal
             if t == "turn_done" and getattr(ev, "state", None) == "cancelled":
                 turn.terminal = "cancelled"
             turn.cancelling = False
