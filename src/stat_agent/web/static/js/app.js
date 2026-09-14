@@ -1650,7 +1650,7 @@
   // Per-turn rendering state (the assistant bubble currently being built).
   const turnUI = {
     turnId: null, body: null, pendingPrompt: null, startedAt: null, timer: null,
-    streamEl: null, streamBuf: '', userScrolledUp: false, execOutputEl: null, planEl: null, statusEl: null, seen: new Set(), lastPhase: 'idle',
+    streamEl: null, streamBuf: '', streamRaf: 0, userScrolledUp: false, unseen: false, execOutputEl: null, blockAnchor: null, planEl: null, statusEl: null, seen: new Set(), lastPhase: 'idle',
   };
 
   function chatEl() { return document.getElementById('chat-messages'); }
@@ -1743,11 +1743,14 @@
       state.stale = new Set((snap.ledger && snap.ledger.stale) || []);
       updateROIList();
       updateStaleInfo();
-      chatEl().innerHTML = '';
+      const el = chatEl();
+      const wasAtBottom = !turnUI.userScrolledUp, oldTop = el.scrollTop;
+      el.innerHTML = '';
       stream.seen = new Set();
       changes.length = 0; assumptions.length = 0;  // the replay below rebuilds the Changes drawer
-      turnUI.turnId = null; turnUI.body = null; turnUI.streamEl = null; turnUI.planEl = null; turnUI.execOutputEl = null;
+      turnUI.turnId = null; turnUI.body = null; turnUI.streamEl = null; turnUI.streamRaf = 0; turnUI.planEl = null; turnUI.execOutputEl = null; turnUI.blockAnchor = null;
       await restoreChatHistory();
+      if (wasAtBottom) scrollChatToBottom(true); else el.scrollTop = oldTop;  // the rebuilt chat keeps the reader's place
       stream.lastSeq = Math.max(stream.lastSeq, snap.last_seq || 0);
     } catch (e) { console.warn('resync failed', e); }
     finally {
@@ -1854,6 +1857,7 @@
       case 'step_started':
         if (ev.total > 1) appendToAssistantMsg(`<div class="small-info step-line"><strong>Step ${ev.index}/${ev.total}:</strong> ${escapeHtml(ev.description || '')}</div>`);
         turnUI.execOutputEl = null;
+        turnUI.blockAnchor = null;
         break;
       case 'filter_complete':
         appendPipelineLog(`Filter: ${ev.compatible.length} compatible skill(s)${ev.bypassed ? ' (filter disabled)' : ''}${ev.rejected.length ? ', excluded: ' + ev.rejected.map(r => r.slug).join(', ') : ''}`);
@@ -1896,25 +1900,37 @@
           appendNode(turnUI.streamEl);
         }
         turnUI.streamBuf += ev.delta;
-        turnUI.streamEl.innerHTML = renderStreamPreview(turnUI.streamBuf);
+        if (!turnUI.streamRaf) turnUI.streamRaf = requestAnimationFrame(() => {
+          turnUI.streamRaf = 0;
+          if (turnUI.streamEl) { turnUI.streamEl.innerHTML = renderStreamPreview(turnUI.streamBuf); scrollChatToBottom(); }
+        });
         break;
       }
       case 'text': {
-        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; turnUI.streamBuf = ''; }
         turnUI.execOutputEl = null;
+        turnUI.blockAnchor = null;
+        const el = document.createElement('div');
         if (ev.role === 'analysis') {
-          appendToAssistantMsg(`<hr class="chat-hr-light"><div><em><strong>Analysis</strong></em></div><div>${renderMarkdown(ev.text)}</div>`);
+          el.innerHTML = `<hr class="chat-hr-light"><div><em><strong>Analysis</strong></em></div><div>${renderMarkdown(ev.text)}</div>`;
         } else if (ev.role === 'note') {
-          appendToAssistantMsg(`<div class="alert-card advice">${renderMarkdown(ev.text)}</div>`);
+          el.innerHTML = `<div class="alert-card advice">${renderMarkdown(ev.text)}</div>`;
         } else {
-          appendToAssistantMsg(`<div>${renderMarkdown(ev.text)}</div>`);
+          el.innerHTML = renderMarkdown(ev.text);
+          const seg = segmentIndexOf(ev);
+          if (seg != null) { el.dataset.step = ev.step_id || ''; el.dataset.seg = String(seg); }
         }
+        if (turnUI.streamEl) { dropStreamPreview(el); } else { appendNode(el); }
         break;
       }
       case 'code_block_started': {
-        if (turnUI.streamEl) { turnUI.streamEl.remove(); turnUI.streamEl = null; turnUI.streamBuf = ''; }
+        if (turnUI.streamEl) dropStreamPreview(null);
         const label = ev.attempt > 1 ? `Code (retry ${ev.attempt - 1})` : 'Code';
-        appendToAssistantMsg(`<details class="code-details" data-block="${escapeHtml(ev.block_id)}"><summary>${label}</summary><div class="chat-code-block"><pre>${escapeHtml(ev.code)}</pre></div></details>`);
+        const el = document.createElement('details');
+        el.className = 'code-details';
+        el.dataset.block = ev.block_id;
+        el.innerHTML = `<summary>${label}</summary><div class="chat-code-block"><pre>${escapeHtml(ev.code)}</pre></div>`;
+        insertSegment(el, ev.step_id, ev.segment_index);
+        turnUI.blockAnchor = el;
         turnUI.execOutputEl = null;
         break;
       }
@@ -1931,7 +1947,7 @@
           pre.className = 'exec-output';
           details.appendChild(pre);
           turnUI.execOutputEl = pre;
-          turnUI.body.appendChild(details);
+          insertAfterAnchor(details);
         }
         for (const ln of (ev.lines || [])) {
           if (/^\s*\d+%\|/.test(ln.text) || /\d+\/\d+ \[.*\]/.test(ln.text)) continue;   // progress bars
@@ -1948,15 +1964,18 @@
         turnUI.execOutputEl = null;
         if (!ev.success && ev.error) {
           const cls = ev.will_retry ? 'warning' : 'error';
-          appendToAssistantMsg(`<div class="alert-card ${cls}"><strong>${ev.will_retry ? 'Error (retrying)' : 'Execution Error'}</strong> ${escapeHtml(ev.error.type || '')}<br>${escapeHtml(ev.error.message || '')}</div>`);
+          insertHtmlAfterAnchor(`<div class="alert-card ${cls}"><strong>${ev.will_retry ? 'Error (retrying)' : 'Execution Error'}</strong> ${escapeHtml(ev.error.type || '')}<br>${escapeHtml(ev.error.message || '')}</div>`);
         }
         break;
       case 'reflection':
-        appendToAssistantMsg(`<div class="small-info" style="color:var(--warning)">Reflecting on the error (attempt ${ev.attempt}/${ev.max_attempts})${ev.summary ? ': ' + escapeHtml(ev.summary) : ''}${ev.will_retry ? ' - retrying' : ''}</div>`);
+        insertHtmlAfterAnchor(`<div class="small-info" style="color:var(--warning)">Reflecting on the error (attempt ${ev.attempt}/${ev.max_attempts})${ev.summary ? ': ' + escapeHtml(ev.summary) : ''}${ev.will_retry ? ' - retrying' : ''}</div>`);
         break;
-      case 'figure':
-        appendToAssistantMsg(`<div class="chat-plot"><img src="/api/figures/${encodeURIComponent(ev.figure_id)}.png" alt="Figure" loading="lazy"></div>`);
+      case 'figure': {
+        // the size reserves the figure's space before the image loads, so nothing shifts while the reader scrolls
+        const size = ev.width && ev.height ? ` width="${ev.width}" height="${ev.height}"` : '';
+        insertHtmlAfterAnchor(`<div class="chat-plot"><img src="/api/figures/${encodeURIComponent(ev.figure_id)}.png" alt="Figure" title="Click to enlarge"${size}></div>`);
         break;
+      }
       case 'execution_issue':
         if (ev.explanation) appendToAssistantMsg(`<div class="alert-card error"><strong>Execution Issue</strong> (${escapeHtml(ev.issue_type || 'error')})<br>${renderMarkdown(ev.explanation)}</div>`);
         break;
@@ -2016,8 +2035,11 @@
     turnUI.pendingPrompt = null;
     turnUI.streamEl = null;
     turnUI.streamBuf = '';
+    turnUI.streamRaf = 0;
     turnUI.userScrolledUp = false;
+    turnUI.unseen = false;
     turnUI.execOutputEl = null;
+    turnUI.blockAnchor = null;
     turnUI.planEl = null;
     turnUI.usage = null;
     state.currentAssistantMsg = turnUI.body;
@@ -2224,6 +2246,59 @@
     turnUI.body.appendChild(node);
   }
 
+  // Prose and code are rendered in the order the model wrote them. Every prose segment and every code block
+  // carries its position in the step's generation (segment_index); the prose arrives first, the code blocks
+  // as they run, so a block is inserted before the first later prose segment of the same step. Its output,
+  // errors, reflections and figures then follow the block (the "anchor") rather than the end of the bubble.
+  function segmentIndexOf(ev) {
+    if (ev.segment_index != null) return ev.segment_index;
+    const m = /-t(\d+)$/.exec(ev.segment_id || '');
+    return m ? parseInt(m[1], 10) : null;
+  }
+  function insertSegment(node, stepId, seg) {
+    if (!turnUI.body) return;
+    if (seg == null) { turnUI.body.appendChild(node); return; }
+    node.dataset.step = stepId || '';
+    node.dataset.seg = String(seg);
+    const later = Array.from(turnUI.body.children).find(c => c.dataset && c.dataset.seg != null && c.dataset.step === (stepId || '') && parseInt(c.dataset.seg, 10) > seg);
+    if (later) turnUI.body.insertBefore(node, later); else turnUI.body.appendChild(node);
+  }
+  function insertAfterAnchor(node) {
+    if (!turnUI.body) return;
+    if (turnUI.blockAnchor && turnUI.blockAnchor.parentNode === turnUI.body) { turnUI.blockAnchor.after(node); turnUI.blockAnchor = node; }
+    else turnUI.body.appendChild(node);
+  }
+  function insertHtmlAfterAnchor(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html.trim();
+    const node = tpl.content.firstElementChild;
+    if (node) insertAfterAnchor(node);
+  }
+  // The streamed preview is replaced in place by the rendered prose (or removed), so the bubble never
+  // shrinks and grows back, which would move the reader's position.
+  function dropStreamPreview(replacement) {
+    if (turnUI.streamRaf) { cancelAnimationFrame(turnUI.streamRaf); turnUI.streamRaf = 0; }
+    if (turnUI.streamEl) {
+      if (replacement) turnUI.streamEl.replaceWith(replacement); else turnUI.streamEl.remove();
+      turnUI.streamEl = null;
+    } else if (replacement) {
+      appendNode(replacement);
+    }
+    turnUI.streamBuf = '';
+  }
+  function openLightbox(src) {
+    const lb = document.getElementById('figure-lightbox');
+    if (!lb) return;
+    lb.querySelector('img').src = src;
+    lb.classList.remove('hidden');
+  }
+  function closeLightbox() {
+    const lb = document.getElementById('figure-lightbox');
+    if (!lb) return;
+    lb.classList.add('hidden');
+    lb.querySelector('img').removeAttribute('src');
+  }
+
   function appendPipelineLog(msg) {
     if (!turnUI.body) return;
     let log = turnUI.body.querySelector('.pipeline-log');
@@ -2297,17 +2372,32 @@
     return html;
   }
 
-  // Auto-scroll follows new content unless the reader has scrolled up; sending a message forces it.
+  // The chat follows new content only while the reader is at the bottom. Any scroll that leaves the bottom,
+  // a trackpad step of a few pixels included, stops the following until the reader returns to the bottom or
+  // taps "Latest"; sending a message forces it. Our own scrolls land at the bottom, so they never flip the state.
+  function chatAtBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight <= 4; }
   function scrollChatToBottom(force) {
     const el = chatEl();
     if (!el) return;
     if (!turnUI._scrollBound) {
       turnUI._scrollBound = true;
       el.addEventListener('scroll', () => {
-        turnUI.userScrolledUp = el.scrollHeight - el.scrollTop - el.clientHeight > 80;
+        turnUI.userScrolledUp = !chatAtBottom(el);
+        if (!turnUI.userScrolledUp) turnUI.unseen = false;
+        updateLatestPill();
       }, { passive: true });
     }
-    if (force || !turnUI.userScrolledUp) el.scrollTop = el.scrollHeight;
+    if (force) { turnUI.userScrolledUp = false; turnUI.unseen = false; }
+    if (!turnUI.userScrolledUp) {
+      if (!chatAtBottom(el)) el.scrollTop = el.scrollHeight;
+    } else {
+      turnUI.unseen = true;
+    }
+    updateLatestPill();
+  }
+  function updateLatestPill() {
+    const pill = document.getElementById('chat-latest');
+    if (pill) pill.classList.toggle('hidden', !(turnUI.userScrolledUp && turnUI.unseen));
   }
 
   function updateChatButtons() {
@@ -3294,6 +3384,14 @@
     });
 
     document.getElementById('abort-btn').addEventListener('click', () => { abortTurn(); });
+    const latestBtn = document.getElementById('chat-latest');
+    if (latestBtn) latestBtn.addEventListener('click', () => scrollChatToBottom(true));
+    chatEl().addEventListener('click', (e) => { const img = e.target.closest('.chat-plot img'); if (img) openLightbox(img.currentSrc || img.src); });
+    const lightbox = document.getElementById('figure-lightbox');
+    if (lightbox) {
+      lightbox.addEventListener('click', closeLightbox);
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !lightbox.classList.contains('hidden')) closeLightbox(); });
+    }
 
     // Mode selector (interactive / auto) and Changes drawer
     const modeSel = document.getElementById('mode-select');

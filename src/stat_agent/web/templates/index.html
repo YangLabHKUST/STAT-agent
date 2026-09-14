@@ -307,6 +307,7 @@
             <p class="small-info">Examples: "Annotate cell types", "Find spatially variable genes", "Show BRCA1 expression"</p>
           </div>
         </div>
+        <button id="chat-latest" class="chat-latest hidden" type="button" title="Scroll to the latest message">&#8595; Latest</button>
         <div class="chat-input-area">
           <textarea id="chat-input" placeholder="Ask about your data..." rows="2"></textarea>
           <div class="chat-buttons">
@@ -316,6 +317,11 @@
         </div>
       </section>
     </main>
+
+    <!-- Figure lightbox: a chat figure at full size; click anywhere or press Escape to close -->
+    <div id="figure-lightbox" class="modal-overlay lightbox hidden" role="dialog" aria-label="Figure, full size">
+      <img alt="Figure, full size">
+    </div>
 
     <!-- Provenance drawer -->
     <aside id="changes-drawer" class="changes-drawer">

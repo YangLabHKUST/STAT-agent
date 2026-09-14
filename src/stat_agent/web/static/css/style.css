@@ -1971,3 +1971,19 @@ h4.chat-heading, h5.chat-heading, h6.chat-heading { font-size: 0.95em; }
 .changes-body { padding: 8px 12px; overflow-y: auto; font-size: 12px; }
 .changes-body h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; color: var(--text-secondary, #666); }
 .change-row { padding: 3px 0; border-bottom: 1px dashed var(--border-light, #eee); word-break: break-all; }
+
+/* --- Chat: following, figures, lightbox (B48) --- */
+.chat-panel { position: relative; }
+.chat-latest {
+  position: absolute; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 5;
+  padding: 3px 12px; border-radius: 999px; border: 1px solid var(--border, #ccc);
+  background: var(--bg, #fff); color: var(--accent, #4a4fc4); font-size: 12px; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15); cursor: pointer;
+}
+.chat-latest.hidden { display: none; }
+.chat-plot img { height: auto; cursor: zoom-in; }
+.modal-overlay.lightbox { background: rgba(0,0,0,0.72); cursor: zoom-out; }
+.modal-overlay.lightbox img {
+  max-width: 96vw; max-height: 94vh; object-fit: contain;
+  background: #fff; border-radius: 6px; box-shadow: 0 16px 48px rgba(0,0,0,0.4);
+}

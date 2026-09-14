@@ -234,6 +234,7 @@ class CodeBlockStarted(EventBase):
     code: str
     language: str = "python"
     attempt: int = 1
+    segment_index: int | None = None  # position among the step's prose and code segments, so a client can interleave them as generated
 
 
 class OutputLine(BaseModel):
@@ -304,6 +305,7 @@ class TextEvent(EventBase):
     text: str
     role: Literal["answer", "analysis", "note"] = "answer"
     step_id: str | None = None
+    segment_index: int | None = None  # see CodeBlockStarted.segment_index; None for analysis and notes
 
 
 class TextDelta(EventBase):

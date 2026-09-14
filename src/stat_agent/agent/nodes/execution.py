@@ -155,9 +155,10 @@ async def generate_node(state: TurnState, runtime: LGRuntime[Context]):
         gen = await ctx.roles.generator.generate(variables, fake_input=fake_input, turn_id=state["turn_id"], step=current["step_number"])
     if cancelled(ctx) or gen is None:
         return cancel_turn(ctx, state)
+    base = len(current.get("segments", [])) if current.get("continuation") else 0  # segments accumulate across a continuation
     for i, seg in enumerate(gen.segments):
         if seg.kind == "text":
-            ctx.emit(TextEvent(segment_id=f"{current['step_id']}-t{i}", text=seg.content, role="answer", step_id=current["step_id"]))
+            ctx.emit(TextEvent(segment_id=f"{current['step_id']}-t{base + i}", text=seg.content, role="answer", step_id=current["step_id"], segment_index=base + i))
     new_segments = [s.model_dump() for s in gen.segments]
     current["segments"] = (list(current.get("segments", [])) + new_segments) if current.get("continuation") else new_segments
     current["interpret"] = gen.interpret_instruction or (current.get("interpret", "") if current.get("continuation") else "")
@@ -225,6 +226,13 @@ def _missing_outputs(ctx: Context, contract: SkillFrontmatter, target_ids: list[
     return missing
 
 
+def _png_size(png: bytes) -> tuple[int | None, int | None]:
+    """Width and height from the PNG header (IHDR), so the viewer can reserve the figure's space before it loads."""
+    if len(png) >= 24 and png[:8] == b"\x89PNG\r\n\x1a\n" and png[12:16] == b"IHDR":
+        return int.from_bytes(png[16:20], "big"), int.from_bytes(png[20:24], "big")
+    return None, None
+
+
 async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
     current = dict(state["current"])
@@ -234,9 +242,9 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     skill = ctx.registry.get(current["skill"]) if current.get("skill") else None
     continuing = bool(current.get("continuation"))
     results: list[dict] = list(current.get("results", [])) if continuing else []
-    code_blocks = [s["content"] for s in current.get("segments", []) if s["kind"] == "code"]
-    if continuing:
-        code_blocks = code_blocks[len(results):]  # segments accumulate across a continuation: run only the new blocks
+    code_blocks = [(i, s["content"]) for i, s in enumerate(current.get("segments", [])) if s["kind"] == "code"]
+    first_block = len(results) if continuing else 0
+    code_blocks = code_blocks[first_block:]  # segments accumulate across a continuation: run only the new blocks
     wrote_anything = False
     produced: list[str] = list(current.get("produced", []))
     reads: set[str] = set(current.get("reads", []))
@@ -247,14 +255,14 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     query = current.get("query_used") or state["query"]
     phase(ctx, "running")
 
-    for bi, code in enumerate(code_blocks):
+    for bi, (seg_index, code) in enumerate(code_blocks, start=first_block):
         if cancelled(ctx):
             current.update(status="cancelled", results=results, produced=produced, reads=sorted(reads), figures=figures)
             return cancel_turn(ctx, state, partial=True, update={"current": current})
         attempt = 1
         while True:
-            block_id = f"{step_id}-b{bi + 1}-a{attempt}"
-            ctx.emit(CodeBlockStarted(block_id=block_id, step_id=step_id, code=code, attempt=attempt))
+            block_id = f"{step_id}-b{bi + 1}-a{attempt}"  # bi counts every block of the step, so a continuation never reuses an id
+            ctx.emit(CodeBlockStarted(block_id=block_id, step_id=step_id, code=code, attempt=attempt, segment_index=seg_index))
 
             batcher = _OutputBatcher(ctx, block_id)
             pump = asyncio.create_task(batcher.pump())
@@ -274,7 +282,8 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
             for png in res.figures:
                 fid = ctx.figure_store(png, step_id, block_id) if ctx.figure_store else f"{block_id}-f{len(block_figs) + 1}"
                 block_figs.append(fid)
-                ctx.emit(FigureEvent(figure_id=fid, block_id=block_id, step_id=step_id, sha256=hashlib.sha256(png).hexdigest(), png_b64=None))
+                width, height = _png_size(png)
+                ctx.emit(FigureEvent(figure_id=fid, block_id=block_id, step_id=step_id, width=width, height=height, sha256=hashlib.sha256(png).hexdigest(), png_b64=None))
             figures += block_figs
 
             step_writes = _code_writes(res)

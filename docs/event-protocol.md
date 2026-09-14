@@ -41,15 +41,20 @@ The web layer exposes one ordered event log per session. The browser opens a sin
    publishes the same two events. Artefacts written by a stopped or failed block are recorded as stale.
 5. Failures end with `turn_error` (a stage crashed) or `turn_done {state: "blocked"}` (a step could
    not run and a later step depended on it, or a clarification could not be settled).
-6. Every event carries `step`, the plan step number, from `step_started` to `step_done` (null for
+6. `text` (role `answer`) and `code_block_started` carry `segment_index`, the position of that prose
+   or code block among the step's generated segments (a continuation keeps counting), so a client can
+   show prose and code in the order they were written even though the prose is published first and each
+   block when it runs; `figure` carries `width` and `height` read from the PNG. Block ids count every block
+   of the step, so a continuation never reuses one.
+7. Every event carries `step`, the plan step number, from `step_started` to `step_done` (null for
    turn-level events). `plan_updated` step statuses are `pending | active | done | failed | blocked |
    skipped | cancelled`; `step_done.status` uses the same words without `pending` and `active`.
-7. `exec_output` carries a batch of lines (one event per ~100 ms or 50 lines, in order), so a
+8. `exec_output` carries a batch of lines (one event per ~100 ms or 50 lines, in order), so a
    verbose block cannot overflow a subscriber queue; when a queue does overflow, the log sends one
    `resync` per overflow episode and the page replays from the snapshot once, coalescing bursts.
-8. `warning {code: "replaced_loaded"}` is emitted when a step overwrote an artefact that came with
+9. `warning {code: "replaced_loaded"}` is emitted when a step overwrote an artefact that came with
    the dataset (for example `obs:celltype`); the analyser is told the same and says so in its summary.
-9. Loading a dataset or a saved session publishes `session_reset` on the previous event log first,
+10. Loading a dataset or a saved session publishes `session_reset` on the previous event log first,
    so a page still attached to it reloads instead of listening to a dead log; a dataset directory
    without `.h5ad` files, or a saved session without `manifest.json`, is refused with `404` before
    the live session is touched. A stopped turn runs no summariser call.
