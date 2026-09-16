@@ -44,6 +44,39 @@ class Fingerprint:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+MAX_LABELS = 2000  # more distinct values than this and a string column is free text, not labels
+MAX_COLUMNS = 32  # column names kept for a table; the true width is in the shape
+
+
+def table_columns(value) -> dict[str, Any]:
+    """``{"columns": [...]}`` for a value that is a table, so a later turn reads its column names
+    from the record instead of guessing them; ``{}`` for anything else."""
+    cols = getattr(value, "columns", None)
+    if cols is None:
+        return {}
+    try:
+        names = [str(c)[:40] for c in list(cols)[:MAX_COLUMNS]]
+    except Exception:  # noqa: BLE001  (an exotic index must never break a snapshot)
+        return {}
+    return {"columns": names} if names else {}
+
+
+def _is_string_like(series) -> bool:
+    dtype = str(getattr(series, "dtype", ""))
+    return hasattr(series, "cat") or dtype == "object" or dtype.startswith("string")
+
+
+def _labels(series) -> list[str] | None:
+    """Sorted distinct values of a string column, or None when there are too many to be labels."""
+    try:
+        values = series.dropna().unique()
+        if len(values) > MAX_LABELS:
+            return None
+        return sorted(str(v)[:200] for v in values)
+    except Exception:  # noqa: BLE001  (unhashable or exotic objects: treat as free text)
+        return None
+
+
 def fp_series(series) -> tuple[str, str | None, int, dict[str, Any]]:
     n = len(series)
     idx = _sample_idx(n)
@@ -53,12 +86,19 @@ def fp_series(series) -> tuple[str, str | None, int, dict[str, Any]]:
     except Exception:  # noqa: BLE001
         n_null = 0
     extra: dict[str, Any] = {}
-    if hasattr(series, "cat"):
-        cats = list(series.cat.categories)
-        extra["categories"] = cats[:200]
-        digest = _h(str(series.dtype), n, n_null, cats, values.astype(str).tolist())
+    try:
+        sampled = np.asarray(values).astype(str).tolist()
+    except Exception:  # noqa: BLE001  (an object column can hold values numpy will not stringify in bulk)
+        sampled = [repr(v)[:200] for v in values]
+    if _is_string_like(series):
+        # object and category are one representation on purpose: writing an h5ad turns string
+        # columns into categoricals in place, which must not read as a change of the values
+        labels = _labels(series)
+        if labels is not None:
+            extra["categories"] = labels[:200]
+        digest = _h("string", n, n_null, labels if labels is not None else "many", sampled)
     else:
-        digest = _h(str(series.dtype), n, n_null, np.asarray(values).astype(str).tolist())
+        digest = _h(str(series.dtype), n, n_null, sampled)
     return digest, str(series.dtype), n_null, extra
 
 
@@ -103,7 +143,7 @@ def fp_uns(value) -> tuple[str, tuple | None, str | None]:
         return _h(type(value).__name__, len(value), text[:4096]), (len(value),), type(value).__name__
     if hasattr(value, "shape"):
         digest, shape, dtype, _ = fp_matrix(value)
-        return digest, shape, dtype
+        return digest, shape, ("DataFrame" if hasattr(value, "columns") else dtype)
     return _h(type(value).__name__, repr(value)[:4096]), None, type(value).__name__
 
 
@@ -137,6 +177,7 @@ def take_snapshot(session, include_X: bool = True) -> Snapshot:
             for key in list(space.keys()):
                 try:
                     d, shape, dtype, extra = fp_matrix(space[key])
+                    extra = {**extra, **table_columns(space[key])}
                 except Exception as exc:  # noqa: BLE001
                     d, shape, dtype, extra = _h("unhashable", str(exc)), None, None, {}
                 aid = f"s{sid}:{kind}:{key}"
@@ -144,10 +185,11 @@ def take_snapshot(session, include_X: bool = True) -> Snapshot:
         for key in list(adata.uns.keys()):
             try:
                 d, shape, dtype = fp_uns(adata.uns[key])
+                extra = table_columns(adata.uns[key])
             except Exception as exc:  # noqa: BLE001
-                d, shape, dtype = _h("unhashable", str(exc)), None, None
+                d, shape, dtype, extra = _h("unhashable", str(exc)), None, None, {}
             aid = f"s{sid}:uns:{key}"
-            arts[aid] = Fingerprint(aid, "uns", str(key), sid, d, shape, dtype)
+            arts[aid] = Fingerprint(aid, "uns", str(key), sid, d, shape, dtype, None, extra)
         if include_X and adata.X is not None:
             d, shape, dtype, extra = fp_matrix(adata.X)
             aid = f"s{sid}:X"

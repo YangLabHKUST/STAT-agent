@@ -19,7 +19,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from stat_agent.events.catalogue import ArtifactChange, ArtifactRefView, ProvenanceUpdate, StateChangeSummary
-from stat_agent.runtime.snapshot import Snapshot, SnapshotDiff, diff_snapshots, parse_artifact_id
+from stat_agent.runtime.snapshot import Fingerprint, Snapshot, SnapshotDiff, diff_snapshots, parse_artifact_id
 
 
 class StepRef(BaseModel):
@@ -48,6 +48,56 @@ class Artifact(BaseModel):
     updated_at: float = Field(default_factory=time.time)
     shape: list[int] | None = None
     dtype: str | None = None
+    categories: list[str] | None = None  # the distinct labels of a string obs column
+    columns: list[str] | None = None  # the column names of a table (the width is in `shape`)
+
+
+MAX_STORED_LABELS = 64
+MAX_SHOWN_COLUMNS = 8
+
+
+def _columns(fp: Fingerprint) -> list[str] | None:
+    cols = (fp.extra or {}).get("columns")
+    return [str(c)[:40] for c in cols] if cols else None
+
+
+def _categories(fp: Fingerprint) -> list[str] | None:
+    cats = (fp.extra or {}).get("categories")
+    if not cats or len(cats) > MAX_STORED_LABELS:  # more than this is an identifier column, not labels
+        return None
+    return [str(c)[:60] for c in cats]
+
+
+def artifact_spec(a: Artifact) -> str:
+    """What the object is, in a few characters, for the inventory the roles are given: code written
+    in a later turn reads this instead of guessing the shape of an artefact it did not create."""
+    shape, dtype = a.shape or [], a.dtype or ""
+    if a.kind == "roi":
+        parts = [p for p in (dtype, f"{shape[0]:,} cells" if shape else "") if p]
+        return f" [{', '.join(parts)}]" if parts else ""
+    if a.kind == "obs":
+        if a.categories:  # the labels themselves, so later code compares against the values present
+            shown = ", ".join(c[:24] for c in a.categories[:6])
+            more = f", +{len(a.categories) - 6} more" if len(a.categories) > 6 else ""
+            return f" [labels: {shown}{more}]"
+        return f" [{dtype}]" if dtype else ""
+    if dtype == "dict":
+        return f" [dict, {shape[0]} entries]" if shape else " [dict]"
+    if dtype in ("list", "tuple", "set") and shape:
+        return f" [{dtype}, {shape[0]} items]"
+    if len(shape) == 2:
+        dims = f"{shape[0]:,} × {shape[1]:,}"
+        head = f"table {dims}" if dtype == "DataFrame" else (f"{dims} {dtype}" if dtype else dims)
+        if a.columns:
+            shown = ", ".join(c[:24] for c in a.columns[:MAX_SHOWN_COLUMNS])
+            more = f", +{shape[1] - MAX_SHOWN_COLUMNS} more" if shape[1] > MAX_SHOWN_COLUMNS else ""
+            return f" [{head}: {shown}{more}]"
+        return f" [{head}]"
+    if len(shape) == 1 and dtype not in ("dict", "list", "tuple", "set"):
+        return f" [{shape[0]:,} values]"
+    if dtype in ("str", "int", "float", "bool", "NoneType"):
+        return f" [{dtype}]"
+    return ""
 
 
 class LedgerEntry(BaseModel):
@@ -255,7 +305,7 @@ class ProvenanceLedger:
             self.artifacts[aid] = Artifact(
                 id=aid, kind=fp.kind, key=fp.key, slice_id=fp.slice_id, fingerprint=fp.digest, version=version,
                 produced_by=producer, inputs=inputs_for(aid), status="fresh", origin=origin, created_at=now, updated_at=now,
-                shape=list(fp.shape) if fp.shape else None, dtype=fp.dtype,
+                shape=list(fp.shape) if fp.shape else None, dtype=fp.dtype, categories=_categories(fp), columns=_columns(fp),
             )
         replaced_loaded = [aid for aid in diff.changed if origin != "load" and aid in self.artifacts and self.artifacts[aid].origin == "load"]
         for aid in diff.changed:
@@ -265,7 +315,7 @@ class ProvenanceLedger:
                 stale_cleared.append(aid)
             a.fingerprint, a.version, a.updated_at = fp.digest, a.version + 1, now
             a.status, a.stale_reason = "fresh", None
-            a.shape, a.dtype = (list(fp.shape) if fp.shape else None), fp.dtype
+            a.shape, a.dtype, a.categories, a.columns = (list(fp.shape) if fp.shape else None), fp.dtype, _categories(fp), _columns(fp)
             if producer is not None or origin != "load":
                 a.produced_by, a.origin = producer, origin
                 a.inputs = inputs_for(aid)
@@ -328,11 +378,11 @@ class ProvenanceLedger:
                 p = a.produced_by
                 who = p.skill or (f"viewer {p.label}" if p.mode == "external" and p.label else p.label or "code")
                 src = f" <- {who}" + (f", turn {p.turn_id}" if p.turn_id else "")
-            by_slice.setdefault(a.slice_id, {}).setdefault(a.kind, []).append(f"{a.key}{tag}{src}")
+            by_slice.setdefault(a.slice_id, {}).setdefault(a.kind, []).append(f"{a.key}{artifact_spec(a)}{tag}{src}")
         lines: list[str] = []
         for sid in sorted(k for k in by_slice if k is not None):
             lines.append(f"Slice {sid}:")
-            for kind in ("obs", "obsm", "obsp", "layers", "uns"):
+            for kind in ("obs", "obsm", "obsp", "layers", "uns", "roi"):
                 keys = by_slice[sid].get(kind)
                 if keys:
                     shown = ", ".join(keys[:max_keys]) + (f" ... (+{len(keys) - max_keys})" if len(keys) > max_keys else "")

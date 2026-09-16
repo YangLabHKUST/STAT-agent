@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import logging
 import threading
 
 from langgraph.runtime import Runtime as LGRuntime
@@ -32,6 +33,8 @@ from stat_agent.roles.analyzer import BlockResult
 from stat_agent.roles.generator import Generation, GeneratorRole
 from stat_agent.roles.reflector import retry_allowed, should_attempt_fix
 from stat_agent.skills.schema import MethodCard, SkillFrontmatter
+
+logger = logging.getLogger(__name__)
 
 UNGUARDED_NOTE = (
     "**NOTE: no registered skill covers this request. The method card below is a provisional contract synthesised for an "
@@ -348,18 +351,24 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                 break
             summary = ctx.summary()
             targets = [summary.slice(i) for i in current["target_slice_ids"]]
-            reflection = await ctx.roles.reflector.reflect(
-                user_query=query,
-                code=code,
-                error_msg=(error_text or "") + ("\n" + res.traceback if res.traceback else ""),
-                stdout_tail=res.stdout_tail,
-                available_rois={r.name: {"slice_id": r.slice_id, "modality": r.modality, "n_cells": r.n_obs} for r in summary.rois},
-                available_columns=sorted({c for t in targets if t for c in t.obs_columns}),
-                has_celltype=any(t.has_celltype for t in targets if t),
-                attempt=attempt,
-                turn_id=state["turn_id"],
-                step=step_no,
-            )
+            try:
+                reflection = await ctx.roles.reflector.reflect(
+                    user_query=query,
+                    code=code,
+                    error_msg=(error_text or "") + ("\n" + res.traceback if res.traceback else ""),
+                    stdout_tail=res.stdout_tail,
+                    available_rois={r.name: {"slice_id": r.slice_id, "modality": r.modality, "n_cells": r.n_obs} for r in summary.rois},
+                    available_columns=sorted({c for t in targets if t for c in t.obs_columns}),
+                    has_celltype=any(t.has_celltype for t in targets if t),
+                    attempt=attempt,
+                    turn_id=state["turn_id"],
+                    step=step_no,
+                )
+            except Exception as exc:  # noqa: BLE001 - the reflector is a recovery role: when it gives no usable answer, the block stays failed and the turn goes on
+                logger.warning("reflection on %s failed (%s: %s); the block stays failed", block_id, type(exc).__name__, exc)
+                ctx.emit(ReflectionEvent(block_id=block_id, attempt=attempt, max_attempts=max_attempts, summary=f"no fix could be obtained ({type(exc).__name__}: {str(exc)[:200]})", will_retry=False))
+                results.append(BlockResult(code=code, stdout=res.stdout, error=error_text, success=False).model_dump())
+                break
             will_retry = retry_allowed(reflection, attempt, max_attempts)
             ctx.emit(ReflectionEvent(block_id=block_id, attempt=attempt, max_attempts=max_attempts, summary=reflection.root_cause, change_magnitude=reflection.change_magnitude, confidence=reflection.confidence, will_retry=will_retry))
             if not will_retry:

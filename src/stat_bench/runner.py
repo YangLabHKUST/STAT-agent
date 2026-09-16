@@ -51,7 +51,7 @@ async def run_cells(system, cells: list[Cell], *, resume: bool = True, retry_fai
         key = f"{cell.query.id}/seed_{cell.seed_index}"
         if resume and rjson.exists():
             prev = RunResult.load(rjson)
-            if not (retry_failed and prev.exit_status in ("failed", "timeout", "crash")):
+            if not (retry_failed and prev.exit_status in ("failed", "timeout", "crash", "provider_error")):
                 results.append(prev)
                 manifest["cells"][key] = {"status": prev.exit_status, "skipped": True}
                 continue

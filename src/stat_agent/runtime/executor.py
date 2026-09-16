@@ -156,6 +156,22 @@ class RuntimeBusy(RuntimeError):
 
 
 SEEDED_NAMES = ("session", "np", "pd")
+KEEP_RECENT = 5  # newest variables always listed, whatever they hold
+
+
+def value_rank(v: Any) -> int:
+    """Listing priority of a namespace value: 0 data, 1 anything else, 2 plotting handles and
+    callables (the first to be dropped when there are more variables than the listing holds)."""
+    try:
+        if inspect.isclass(v) or inspect.isroutine(v):
+            return 2
+        if (getattr(type(v), "__module__", "") or "").split(".")[0] == "matplotlib":
+            return 2
+        if isinstance(v, (dict, list, tuple, set)) or hasattr(v, "shape") or hasattr(v, "columns"):
+            return 0
+    except Exception:  # noqa: BLE001  (an exotic object must never break the listing)
+        return 1
+    return 1
 
 
 def describe_value(v: Any) -> str:
@@ -260,8 +276,23 @@ class Runtime:
         return {n for n, v in self.namespace.items() if n not in SEEDED_NAMES and (isinstance(v, DataSlice) or id(v) in slice_adatas)}
 
     def describe_namespace(self, limit: int = 40) -> list[tuple[str, str]]:
-        """(name, description) for the last `limit` user variables; what the generator is shown."""
-        return [(n, describe_value(self.namespace[n])) for n in self.user_variables()[-limit:]]
+        """(name, description) for the user variables a later block is most likely to need; what the
+        generator is shown. Over `limit` variables, data objects are kept before plotting handles and
+        callables, so the locals of one figure cannot push every table and array out of the listing."""
+        names = self.user_variables()
+        if limit <= 0:
+            return []
+        if len(names) <= limit:
+            keep = set(names)
+        else:
+            keep = set(names[-min(KEEP_RECENT, limit):])  # the newest few whatever they are: a continuation block may still be drawing
+            for rank in (0, 1, 2):
+                for n in reversed(names):
+                    if len(keep) >= limit:
+                        break
+                    if value_rank(self.namespace[n]) == rank:
+                        keep.add(n)
+        return [(n, describe_value(self.namespace[n])) for n in names if n in keep]
 
     @property
     def busy(self) -> bool:

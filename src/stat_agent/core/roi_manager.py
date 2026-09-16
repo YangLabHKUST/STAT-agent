@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 import anndata as ad
 import geopandas as gpd
@@ -35,18 +36,59 @@ class ROI:
     geometry: Geometry
     slice_id: int | None = None
     modality: str | None = None
-    adata: ad.AnnData | None = None
     coordinate_system: str = "global"
     metadata: dict = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    # the slice whose current data the region reads, and the member cells, fixed when the region is drawn
+    _source: Any = field(default=None, init=False, repr=False, compare=False)
+    _members: np.ndarray | None = field(default=None, init=False, repr=False, compare=False)
+    # a stored subset, only for a region built without a source slice
+    _snapshot: ad.AnnData | None = field(default=None, init=False, repr=False, compare=False)
+
+    def bind(self, source: Any, obs_names) -> None:
+        """Attach the slice (any object with a current ``adata``) and the names of the member cells."""
+        self._source = source
+        self._members = np.asarray(list(obs_names), dtype=object)
+        self._snapshot = None
+
+    def _member_index(self) -> np.ndarray | None:
+        """Positions of the member cells in the source's current data (members no longer present are dropped)."""
+        src = getattr(self._source, "adata", None) if self._source is not None else None
+        if src is None or self._members is None:
+            return None
+        idx = src.obs_names.get_indexer(self._members)
+        return idx[idx >= 0]
+
+    @property
+    def adata(self) -> ad.AnnData | None:
+        """The region's cells as they are now: a view of the current slice data, so a column added to the
+        slice after the region was drawn is visible through it. Copy it before modifying it in place."""
+        idx = self._member_index()
+        if idx is None:
+            return self._snapshot
+        return self._source.adata[idx]
+
+    @adata.setter
+    def adata(self, value: ad.AnnData | None) -> None:
+        """With a source slice the subset only redefines the membership; without one it is stored as is."""
+        if self._source is not None and value is not None:
+            self._members = np.asarray(list(value.obs_names), dtype=object)
+        else:
+            self._snapshot = value
 
     @property
     def n_obs(self) -> int:
-        return int(self.adata.n_obs) if self.adata is not None else 0
+        idx = self._member_index()
+        if idx is not None:
+            return int(len(idx))
+        return int(self._snapshot.n_obs) if self._snapshot is not None else 0
 
     @property
     def n_vars(self) -> int:
-        return int(self.adata.n_vars) if self.adata is not None else 0
+        src = getattr(self._source, "adata", None) if self._source is not None else None
+        if src is not None and self._members is not None:
+            return int(src.n_vars)
+        return int(self._snapshot.n_vars) if self._snapshot is not None else 0
 
     @property
     def area(self) -> float:
@@ -67,7 +109,10 @@ class ROI:
 
     @property
     def obs_names(self) -> list[str]:
-        return [str(n) for n in self.adata.obs_names] if self.adata is not None else []
+        idx = self._member_index()
+        if idx is not None:
+            return [str(n) for n in self._source.adata.obs_names[idx]]
+        return [str(n) for n in self._snapshot.obs_names] if self._snapshot is not None else []
 
     def contains_point(self, x: float, y: float) -> bool:
         return bool(self.geometry.contains(Point(x, y)))

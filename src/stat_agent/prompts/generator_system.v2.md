@@ -141,7 +141,7 @@ print(f"Type: {roi.type}")               # 'bbox', 'circle', or 'polygon' (freeh
 print(f"Bounds: {roi.bounds}")           # (x_min, y_min, x_max, y_max)
 
 # Access filtered data (like slice.adata)
-roi_adata = roi.adata                    # AnnData filtered to ROI
+roi_adata = roi.adata                    # the ROI's cells with the slice's CURRENT columns (a view; .copy() before modifying)
 celltype_counts = roi.adata.obs['celltype'].value_counts()
 
 # Iterate all ROIs
@@ -154,7 +154,7 @@ for roi_name in session.roi_subsets.keys():
 - `roi.name`: str - ROI name
 - `roi.slice_id`: int - Which slice (0, 1, 2, ...)
 - `roi.modality`: str - 'gene' or 'protein'
-- `roi.adata`: AnnData - Filtered data for this ROI
+- `roi.adata`: AnnData - The ROI's cells read from the current slice on every access, so a column added to the slice later is visible here too (a view: `.copy()` it before modifying, and write results onto the slice, not onto the ROI)
 - `roi.geometry`: shapely geometry - Full geometry object
 - `roi.type`: str - 'bbox', 'circle', or 'polygon' (freehand)
 - `roi.bounds`: tuple - (x_min, y_min, x_max, y_max)

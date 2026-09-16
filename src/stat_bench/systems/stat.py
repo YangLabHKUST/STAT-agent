@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import os
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -65,11 +68,20 @@ class StatSystem:
             src = root / rel
             if src.is_dir():
                 for f in src.iterdir():
-                    shutil.copy2(f, ds / f.name)
+                    _copy(f, ds / f.name)
             else:
-                shutil.copy2(src, ds / src.name)
+                _copy(src, ds / src.name)
         if cell.query.reference:
-            shutil.copy2(root / cell.query.reference, ds / Path(cell.query.reference).name)
+            # a reference is not a slice: the loader reads only the top level, and files in a subdirectory are
+            # listed as extra_files for the roles; the query text names it by its bare name, so it is also placed
+            # in the run's working directory (StatSystem.run chdirs into cell.out_dir)
+            ref = root / cell.query.reference
+            (ds / "ref").mkdir(exist_ok=True)
+            _copy(ref, ds / "ref" / ref.name)
+            _copy(ref, Path(cell.out_dir) / ref.name)
+        if cell.query.image:
+            img = root / cell.query.image
+            _copy(img, ds / img.name)  # he.tif / he_slice_0.tif: matched to slice 0 by the loader
         session = SimpleSession(name=cell.query.id)
         session.load_dataset(ds)
         return session
@@ -80,9 +92,12 @@ class StatSystem:
         tmp = Path(tempfile.mkdtemp(prefix=f"stat_{q.id}_"))
         out = Path(cell.out_dir)
         out.mkdir(parents=True, exist_ok=True)
+        cwd0 = os.getcwd()
+        timeout_s = int(cell.extra.get("timeout_s") or q.timeout_s or 0)
         t0 = time.time()
-        res = RunResult(query_id=q.id, query_text=q.text, task=q.category, category=q.category, dataset=q.dataset, difficulty=q.difficulty, has_ground_truth=q.ground_truth is not None, system=self.name, model=cell.backbone, suite_id=cell.suite_id, driver=cell.driver, ablation={"name": cell.ablation}, policy=cell.policy, seed=cell.seed, seed_index=cell.seed_index, timeout_s=q.timeout_s, software=software_info(), run_id=hashlib.blake2b(f"{cell.suite_id}|{q.id}|{cell.seed_index}".encode(), digest_size=6).hexdigest())
+        res = RunResult(query_id=q.id, query_text=q.text, task=q.category, category=q.category, dataset=q.dataset, difficulty=q.difficulty, has_ground_truth=q.ground_truth is not None, system=self.name, model=cell.backbone, suite_id=cell.suite_id, driver=cell.driver, ablation={"name": cell.ablation}, policy=cell.policy, seed=cell.seed, seed_index=cell.seed_index, timeout_s=timeout_s, software=software_info(), run_id=hashlib.blake2b(f"{cell.suite_id}|{q.id}|{cell.seed_index}".encode(), digest_size=6).hexdigest())
         try:
+            os.chdir(out)  # relative paths in the query text and relative writes of generated code resolve in the run directory
             session = self._session(cell, tmp)
             llm = self.llm_factory(cell) if self.llm_factory else LLMClient(spec=make_spec(cell.backbone), calllog=CallLogger(), meter=UsageMeter())
             ablation = AblationConfig.parse(cell.ablation)
@@ -92,10 +107,23 @@ class StatSystem:
             agent = Agent(session, llm, registry=self.registry, mode="auto" if cell.policy == "auto" else "interactive", policy=policy_for(cell), ablation=ablation, session_dir=out / "logs", sinks=[sink], durable=False, loop_model=cell.extra.get("loop_model"))
             res.backbone = {"model_id": cell.backbone, "temperature_supported": True}
             events = []
-            async for ev in agent.run_turn(q.text):
-                events.append(ev)
+
+            async def _drain() -> None:
+                async for ev in agent.run_turn(q.text):
+                    events.append(ev)
+
+            try:
+                await asyncio.wait_for(_drain(), timeout=timeout_s or None)
+            except TimeoutError:
+                agent.cancel()  # stops the graph at its next check and the running code; what exists is recorded
+                res.timed_out = True
+            turn_errors = [e for e in events if e.type == "turn_error"]
+            if res.timed_out:
+                res.exit_status = "timeout"
+            elif turn_errors and _is_provider_error(turn_errors[-1].message, turn_errors[-1].code):
+                res.exit_status = "provider_error"
             # interactive/scripted-miss: a pending prompt ends the run
-            if agent.is_waiting:
+            elif agent.is_waiting:
                 res.exit_status = "clarification_pending"
                 res.refusal = {"refused": False, "reason_kind": "clarification_pending", "reason_text": agent.pending.question or " | ".join(agent.pending.questions)}
             else:
@@ -139,14 +167,34 @@ class StatSystem:
             res.sse = detect_sse(res, session)
             agent.save_state()
         except Exception as exc:  # noqa: BLE001
-            res.exit_status = "crash"
+            res.exit_status = "provider_error" if _is_provider_error(str(exc), type(exc).__name__) else "crash"
             res.errors.append({"stage": "run", "type": type(exc).__name__, "message": str(exc)[:2000]})
             res.wall_s = time.time() - t0
         finally:
+            os.chdir(cwd0)
             shutil.rmtree(tmp, ignore_errors=True)
         res.finished_at = time.time()
         res.save(out)
         return res
+
+
+def _copy(src: Path, dst: Path) -> None:
+    """APFS clone when possible (no disk cost), plain copy otherwise."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if subprocess.run(["cp", "-c", str(src), str(dst)], capture_output=True).returncode != 0:
+        shutil.copy2(src, dst)
+
+
+_PROVIDER_ERROR_NAMES = ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "ServiceUnavailableError", "ConnectError", "ReadTimeout", "ConnectTimeout", "RemoteProtocolError", "ConnectionError", "TimeoutError", "IncompleteRead", "ChunkedEncodingError")
+_PROVIDER_ERROR_TEXT = ("connection reset", "connection aborted", "timed out", "temporarily unavailable", "overloaded", "rate limit", "bad gateway", "gateway time", "server error", "empty response", "eof occurred", "error code: 429", "error code: 5", "error code: 408")
+
+
+def _is_provider_error(message: str, code: str | None = None) -> bool:
+    """A network or provider-side failure (retried by the caller, reported as provider_error), not a STAT failure."""
+    if code and code in _PROVIDER_ERROR_NAMES:
+        return True
+    msg = (message or "").lower()
+    return any(n.lower() in msg for n in _PROVIDER_ERROR_NAMES) or any(t in msg for t in _PROVIDER_ERROR_TEXT)
 
 
 def _decisions(events: list) -> dict[str, Any]:

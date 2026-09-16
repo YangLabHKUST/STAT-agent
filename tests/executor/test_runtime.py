@@ -296,3 +296,23 @@ def test_a_write_on_a_copy_does_not_clear_a_stale_mark():
     assert ledger.stale_ids() == [aid]
     d7 = record(rt.run("for s in session.iter_slices():\n    s.adata.uns['rank_genes_groups'] = {'names': ['g1', 'g2']}\n"), "t7")
     assert d7.entry.stale_cleared == [aid] and ledger.stale_ids() == []
+
+
+def test_the_namespace_listing_keeps_data_when_a_figure_fills_it(rt):
+    assert rt.run(
+        "table = pd.DataFrame({'gene': ['A', 'B'], 'score': [1.0, 2.0]})\n"
+        "groups = {'TAM': 3, 'Macrophage': 4}\n"
+    ).success
+    # a figure's locals: many artists and one class, all assigned after the data
+    artists = "\n".join(f"art{i} = Rectangle((0, 0), 1, 1)" for i in range(60))
+    assert rt.run("from matplotlib.patches import Rectangle\n" + artists).success
+    listed = dict(rt.describe_namespace(limit=40))
+    assert len(listed) <= 40
+    assert "DataFrame" in listed["table"] and "TAM" in listed["groups"]  # data survived
+    assert "art59" in listed and "art0" not in listed  # the newest artists are kept, the oldest dropped
+    assert "Rectangle" not in listed  # a class is not worth a line
+
+
+def test_a_short_namespace_is_listed_whole(rt):
+    assert rt.run("a = 1\nb = [1, 2]\nc = 'x'").success
+    assert [n for n, _ in rt.describe_namespace()] == ["a", "b", "c"]

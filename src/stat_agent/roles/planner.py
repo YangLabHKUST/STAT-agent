@@ -44,7 +44,8 @@ class PlanOutput(BaseModel):
 class PlanResult(BaseModel):
     needs_clarification: bool
     question: str | None = None
-    direct_answer: str | None = None
+    direct_answer: str | None = None  # the whole turn is this answer: no steps run
+    preamble: str = ""  # an answer the planner gave *and* planned steps for (a "tell me X, then do Y" turn)
     steps: list[PlanStep] = Field(default_factory=list)
     invalid_slice_ids: list[int] = Field(default_factory=list)
     fallback: bool = False
@@ -102,7 +103,7 @@ class PlannerRole(Role):
             if not s.target_slice_ids and summary.n_slices == 1:
                 s.target_slice_ids = list(summary.slice_ids)
             s.depends_on = [d for d in s.depends_on if 1 <= d < i]
-        return PlanResult(needs_clarification=False, steps=steps, raw=raw)
+        return PlanResult(needs_clarification=False, steps=steps, preamble=answer, raw=raw)
 
     @staticmethod
     def skills_block(catalog: list[tuple[str, str]] | None) -> str:

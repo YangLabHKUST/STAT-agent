@@ -58,6 +58,10 @@ async def plan_node(state: TurnState, runtime: LGRuntime[Context]):
         emit_prompt(ctx, pending, None)
         return Command(update={"pending": pending.model_dump()}, goto="ask_planner")
     plan = [s.model_dump() for s in result.steps]
+    if result.preamble:
+        # the turn asked something before it asked for work ("first tell me what this changes, then
+        # redo it"): the planner answered it, so say it before the steps instead of dropping it
+        ctx.emit(TextEvent(segment_id=f"{state['turn_id']}-preamble", text=result.preamble, role="answer"))
     ctx.emit(PlanUpdated(plan_id=state["turn_id"], reason="created", steps=_plan_views(plan, 0)))
     return Command(update={"plan": plan, "step_index": 0, "pending": None, "retries": 0}, goto="select_step")
 

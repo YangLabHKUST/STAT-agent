@@ -19,6 +19,7 @@ from stat_agent.llm import (
     extract_json,
 )
 from stat_agent.llm.client import content_text
+from stat_agent.llm.structured import parse_json_to
 
 
 class Stub(BaseChatModel):
@@ -99,3 +100,15 @@ def test_fixture_record_then_replay(tmp_path):
 def test_content_text_handles_blocks():
     assert content_text(AIMessage(content=[{"type": "text", "text": "a"}, {"type": "text", "text": "b"}])) == "ab"
     assert content_text(AIMessage(content="plain")) == "plain"
+
+
+def test_parse_json_recovers_prose_python_literals_and_unclosed_fences():
+    """A reply that explains itself first, quotes a Python fragment, opens a fence it never closes, or
+    writes the object as a Python literal still yields its JSON (the reflector reply of CRC-1 t4)."""
+    unclosed = "Root cause: rename(columns={'group': 'comparison_group'}) did nothing.\n\n```json\n{\"needs_clarification\": true, \"steps\": []}\n1. [scanpy docs](https://scanpy.readthedocs.io)\n"
+    assert parse_json_to(Plan, unclosed).needs_clarification is True
+    assert parse_json_to(Plan, "{'needs_clarification': True, 'steps': []}").needs_clarification is True
+    assert parse_json_to(Plan, 'e.g. {"x": 1}, then the answer {"needs_clarification": false, "steps": []}').needs_clarification is False
+    with pytest.raises(StructuredOutputError):
+        parse_json_to(Plan, "prose with {'group': 'x'} and nothing else")
+    assert extract_json("see {'a': 1} then {\"b\": 2}") == "{'a': 1}"  # the first candidate, as before

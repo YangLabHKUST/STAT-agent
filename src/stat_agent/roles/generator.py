@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 import re
 from collections.abc import AsyncIterator
 from typing import Literal
@@ -13,6 +14,8 @@ from stat_agent.core.view import SessionSummary
 from stat_agent.memory.context import generator_session_block, history_block, plan_block, skill_guidance_block
 from stat_agent.memory.state import ConversationMemory
 from stat_agent.roles.base import Role
+
+logger = logging.getLogger(__name__)
 
 _INTERPRET_RE = re.compile(r"__INTERPRET__:\s*(.+?)(?:\n|$)")
 _CODE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+.-]*)[ \t]*\n(.*?)```", re.S)
@@ -31,6 +34,20 @@ def _is_python_block(tag: str, body: str) -> bool:
     except (SyntaxError, ValueError):
         return False
     return any(not (isinstance(n, ast.Expr) and isinstance(n.value, (ast.Name, ast.Constant))) for n in tree.body)
+
+_TRANSPORT_ERROR_NAMES = frozenset({
+    "TransportError", "NetworkError", "ProtocolError", "RemoteProtocolError", "LocalProtocolError", "ReadError", "WriteError",
+    "ConnectError", "CloseError", "TimeoutException", "ReadTimeout", "WriteTimeout", "ConnectTimeout", "PoolTimeout",
+    "APIConnectionError", "APITimeoutError", "IncompleteRead", "ChunkedEncodingError", "ServerDisconnectedError", "ClientPayloadError",
+})
+
+
+def is_transport_error(exc: BaseException) -> bool:
+    """A dropped, reset or timed-out connection, whichever HTTP stack raised it.
+
+    Matched by class name along the MRO: httpx, the copies of it vendored inside provider SDKs, and the
+    SDKs' own connection errors share names, not classes. HTTP status errors are not transport errors."""
+    return any(t.__name__ in _TRANSPORT_ERROR_NAMES for t in type(exc).__mro__)
 
 
 class Segment(BaseModel):
@@ -120,12 +137,23 @@ class GeneratorRole(Role):
         return parse_segments(comp.text)
 
     async def generate_streaming(self, variables: dict, *, fake_input=None, turn_id: str | None = None, step: int | None = None) -> AsyncIterator[str | Generation]:
-        """Yield text deltas, then the final ``Generation``."""
+        """Yield text deltas, then the final ``Generation``.
+
+        A connection that drops inside the stream is retried once without streaming (the request-level
+        retries of the provider client apply there); the deltas already yielded are superseded by the
+        final generation, which the viewer renders in place of the streamed preview."""
         msgs = self.messages(variables)
         pieces: list[str] = []
-        async for delta in self.llm.stream_text(msgs, role=self.name, prompt_id=self.prompt_id, turn_id=turn_id, step=step, fake_input=fake_input if fake_input is not None else variables):
-            pieces.append(delta)
-            yield delta
+        try:
+            async for delta in self.llm.stream_text(msgs, role=self.name, prompt_id=self.prompt_id, turn_id=turn_id, step=step, fake_input=fake_input if fake_input is not None else variables):
+                pieces.append(delta)
+                yield delta
+        except Exception as exc:  # noqa: BLE001 - only a transport failure is retried; everything else propagates
+            if not is_transport_error(exc):
+                raise
+            logger.warning("generation stream dropped after %d characters (%s: %s); retrying without streaming", sum(len(p) for p in pieces), type(exc).__name__, exc)
+            yield await self.generate(variables, fake_input=fake_input, turn_id=turn_id, step=step)
+            return
         yield parse_segments("".join(pieces))
 
     @staticmethod
@@ -138,4 +166,4 @@ class GeneratorRole(Role):
         return text
 
 
-__all__ = ["GeneratorRole", "Generation", "Segment", "parse_segments"]
+__all__ = ["GeneratorRole", "Generation", "Segment", "is_transport_error", "parse_segments"]

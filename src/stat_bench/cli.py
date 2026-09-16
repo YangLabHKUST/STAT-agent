@@ -24,7 +24,7 @@ def cmd_run(args) -> int:
 
     suite = Suite.load(args.suite)
     data_root = args.data_root or __import__("os").environ.get(suite.data_root_env)
-    cells = plan_cells(suite, system=args.system, driver=args.driver, ablation=args.ablation, policy=args.policy, backbone=args.backbone, seeds=args.seeds, out=Path(args.out), data_root=data_root, ids=args.queries.split(",") if args.queries else None, categories=args.category.split(",") if args.category else None, execute=not args.no_execute)
+    cells = plan_cells(suite, system=args.system, driver=args.driver, ablation=args.ablation, policy=args.policy, backbone=args.backbone, seeds=args.seeds, out=Path(args.out), data_root=data_root, ids=args.queries.split(",") if args.queries else None, categories=args.category.split(",") if args.category else None, execute=not args.no_execute, extra={"timeout_s": args.timeout} if args.timeout else None)
     if args.dry_run:
         for c in cells:
             print(c.query.id, c.seed_index, c.out_dir)
@@ -110,6 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--no-resume", action="store_true")
     r.add_argument("--retry-failed", action="store_true")
     r.add_argument("--dry-run", action="store_true")
+    r.add_argument("--timeout", type=int, help="wall-clock seconds per query (overrides the suite's timeout_s)")
     r.set_defaults(func=cmd_run)
     s = sub.add_parser("summarize", help="aggregate results with bootstrap CIs")
     s.add_argument("results", nargs="+")

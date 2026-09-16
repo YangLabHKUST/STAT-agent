@@ -28,8 +28,8 @@ from stat_agent.core.roi_manager import ROI, ROIManager
 logger = logging.getLogger(__name__)
 
 
-def filter_adata_by_roi(adata: ad.AnnData, roi_def: dict[str, Any]) -> ad.AnnData:
-    """Return a copy of ``adata`` restricted to observations inside the ROI definition."""
+def roi_membership_mask(adata: ad.AnnData, roi_def: dict[str, Any]) -> np.ndarray:
+    """Boolean mask over ``adata.obs`` of the observations inside the ROI definition."""
     roi_type = roi_def.get("type", "bbox")
     x = adata.obs["x"].to_numpy(dtype=float)
     y = adata.obs["y"].to_numpy(dtype=float)
@@ -45,7 +45,12 @@ def filter_adata_by_roi(adata: ad.AnnData, roi_def: dict[str, Any]) -> ad.AnnDat
         mask = MplPath(vertices).contains_points(np.column_stack([x, y]))
     else:
         raise ValueError(f"Unknown ROI type: {roi_type}")
-    return adata[np.asarray(mask, dtype=bool)].copy()
+    return np.asarray(mask, dtype=bool)
+
+
+def filter_adata_by_roi(adata: ad.AnnData, roi_def: dict[str, Any]) -> ad.AnnData:
+    """Return a copy of ``adata`` restricted to observations inside the ROI definition."""
+    return adata[roi_membership_mask(adata, roi_def)].copy()
 
 
 class SimpleSession:
@@ -179,9 +184,10 @@ class SimpleSession:
             )
         else:
             raise ValueError(f"Unknown ROI type: {roi_type}")
-        roi.adata = filter_adata_by_roi(slice_obj.adata, roi_definition)
+        # the region keeps its member cells and reads their current data from the slice on every access
+        roi.bind(slice_obj, slice_obj.adata.obs_names[roi_membership_mask(slice_obj.adata, roi_definition)])
         roi.metadata["definition"] = _jsonable_definition(roi_definition)
-        logger.info("Created ROI '%s' on slice %s: %d cells/spots", roi_name, slice_id, roi.adata.n_obs)
+        logger.info("Created ROI '%s' on slice %s: %d cells/spots", roi_name, slice_id, roi.n_obs)
         return roi
 
     def get_roi(self, roi_name: str) -> ROI | None:
@@ -194,6 +200,7 @@ class SimpleSession:
         return self.roi_manager.rename_roi(old_name, new_name)
 
     def get_roi_data(self, roi_name: str, slice_id: int | None = None) -> ad.AnnData | None:
+        """The region's cells with their current slice data (a view; copy before modifying in place)."""
         roi = self.get_roi(roi_name)
         if roi is None or (slice_id is not None and roi.slice_id != slice_id):
             return None

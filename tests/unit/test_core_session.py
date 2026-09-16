@@ -121,3 +121,33 @@ def test_lock_timeout_raises_session_busy():
         with s.lock.hold("gui-nested", timeout=0.5):  # re-entrant
             assert s.lock.locked
     assert not s.lock.locked
+
+
+def test_roi_data_follows_the_slice():
+    """A region reads its cells from the current slice: a column written after the region was drawn is
+    visible through it, membership stays what was drawn, and cells removed from the slice drop out."""
+    s = make_session("S1_cell_gene")
+    roi = s.create_roi("box", 0, {"type": "bbox", "x_min": 0, "x_max": 50, "y_min": 0, "y_max": 50})
+    n0, members = roi.n_obs, list(roi.obs_names)
+    assert n0 > 0 and roi.adata.n_obs == n0 and "later" not in roi.adata.obs.columns
+    sl = s.get_slice(0)
+    sl.adata.obs["later"] = np.arange(sl.adata.n_obs)
+    assert "later" in roi.adata.obs.columns and "later" in s.get_roi_data("box").obs.columns
+    assert list(roi.adata.obs_names) == members and roi.n_obs == n0 and roi.n_vars == sl.adata.n_vars
+    # a write on the view does not leak into the slice or the membership
+    view = roi.adata
+    view.obs["scratch"] = 1
+    assert "scratch" not in sl.adata.obs.columns and "scratch" not in roi.adata.obs.columns
+    # the slice's object is replaced by a subset that drops half of the region: the region follows
+    keep = [n for i, n in enumerate(sl.adata.obs_names) if n not in members[: n0 // 2]]
+    sl.adata = sl.adata[keep].copy()
+    assert roi.n_obs == n0 - n0 // 2 and set(roi.obs_names) == set(members[n0 // 2 :])
+    # a region built without a source slice keeps the subset it is given
+    from shapely.geometry import box
+
+    from stat_agent.core.roi_manager import ROI
+
+    lone = ROI(name="lone", geometry=box(0, 0, 10, 10))
+    assert lone.n_obs == 0 and lone.adata is None
+    lone.adata = sl.adata[:3].copy()
+    assert lone.n_obs == 3 and lone.obs_names == [str(n) for n in sl.adata.obs_names[:3]]

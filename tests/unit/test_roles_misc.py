@@ -59,7 +59,7 @@ def test_failed_run_marks_its_writes_stale():
     art = ledger.get("s0:obs:half_done")
     assert art is not None and art.status == "stale" and "failed" in (art.stale_reason or "")
     text = ledger.state_text([0])
-    assert "s0:obs:half_done" in delta.entry.stale_now and "half_done (STALE: written by a run that failed) <- mini-annotate, turn t1" in text
+    assert "s0:obs:half_done" in delta.entry.stale_now and "half_done [int64] (STALE: written by a run that failed) <- mini-annotate, turn t1" in text
     # a successful re-run of the same column clears it
     before = take_snapshot(session)
     session.get_slice(0).adata.obs["half_done"] = 2
@@ -242,5 +242,5 @@ def test_state_text_names_producers_and_viewer_edits():
     a.obs["celltype"] = a.obs["celltype"].cat.rename_categories({"Tumor": "Cancer"})
     ledger.record_external(before, take_snapshot(session), label="celltype_rename")
     text = ledger.state_text([0])
-    assert "celltype <- viewer celltype_rename" in text
-    assert "score (STALE: input changed by celltype_rename (s0:obs:celltype)) <- code, turn t3" in text
+    assert "celltype [labels: B cell, Cancer, Fibroblast, T cell] <- viewer celltype_rename" in text
+    assert "score [float64] (STALE: input changed by celltype_rename (s0:obs:celltype)) <- code, turn t3" in text

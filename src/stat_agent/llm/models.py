@@ -165,6 +165,10 @@ def make_model(spec: ModelSpec | str, **overrides: Any):
     if prov == "openai" and spec.model.lower().startswith(RESPONSES_API_PREFIXES):
         kwargs["use_responses_api"] = True
         kwargs.setdefault("reasoning", {"effort": spec.extra.pop("reasoning_effort", "medium")})
+    if prov == "poe":
+        # Poe's bots run a server-side web search by default and append a "Learn more" link list to the reply;
+        # STAT wants the bare model (spec.extra can still override it)
+        kwargs["extra_body"] = {"web_search": False}
     kwargs.update(spec.extra)
     return ChatOpenAI(**kwargs)
 
