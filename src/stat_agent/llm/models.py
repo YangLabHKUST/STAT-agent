@@ -169,6 +169,11 @@ def make_model(spec: ModelSpec | str, **overrides: Any):
         # Poe's bots run a server-side web search by default and append a "Learn more" link list to the reply;
         # STAT wants the bare model (spec.extra can still override it)
         kwargs["extra_body"] = {"web_search": False}
+        # Poe's Claude bots reason before they answer, on some prompts for ten minutes or more; a reply that sends
+        # nothing for about ten minutes is cut by the server ("Connection error"). Streamed, the reasoning keeps
+        # the connection alive; the reply and its usage are assembled as before.
+        kwargs["streaming"] = True
+        kwargs["stream_usage"] = True
     kwargs.update(spec.extra)
     return ChatOpenAI(**kwargs)
 

@@ -254,7 +254,8 @@ async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
         step = PlanStep.model_validate(step_dict).model_copy(update={"refined_query": PlanStep.model_validate(step_dict).refined_query + note})
         contract, slug = ctx.registry.get(alternative).meta, alternative
     if verdict.kind == "met":
-        current["complete_query"] = verdict.complete_query or step.refined_query
+        # the verifier's complete query replaces the refined one, which carries the switch note; the note must survive
+        current["complete_query"] = verdict.complete_query + current.get("switch_note", "") if verdict.complete_query else step.refined_query
         return Command(update={"current": current, **extra}, goto="generate")
     if verdict.kind == "ask":
         pending = Interrupt(kind="verifier", step=current["step_number"], questions=verdict.questions, skill=slug)

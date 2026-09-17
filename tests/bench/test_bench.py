@@ -123,11 +123,30 @@ def test_session_bench_scripts(script_name, registry):
 
 
 def test_provider_error_classification():
-    from stat_bench.systems.stat import _is_provider_error
+    from stat_agent.llm.client import is_provider_error, is_provider_exception
 
     # langchain_openai wraps openai.APIConnectionError as OpenAIConnectionError("Connection error.")
-    assert _is_provider_error("Connection error.", "OpenAIConnectionError")
-    assert _is_provider_error("Connection error.", None)
-    assert _is_provider_error("Error code: 503 - upstream unavailable", "InternalServerError")
-    assert not _is_provider_error("KeyError: 'celltype'", "KeyError")
+    assert is_provider_error("Connection error.", "OpenAIConnectionError")
+    assert is_provider_error("Connection error.", None)
+    assert is_provider_error("Error code: 503 - upstream unavailable", "InternalServerError")
+    assert not is_provider_error("KeyError: 'celltype'", "KeyError")
+
+    class APIConnectionError(Exception):
+        pass
+
+    class OpenAIConnectionError(APIConnectionError):
+        pass
+
+    assert is_provider_exception(OpenAIConnectionError("Connection error."))
+    assert not is_provider_exception(ValueError("LLM function must return dict"))
+
+
+def test_a_verifier_decline_is_recorded_as_a_refusal(tmp_path, registry):
+    """A registered skill's missing prerequisite ends in advice and no code; the record says refused, as it does for
+    a method card's refusal event (stat40 Q40 was `partial`, Q37 `refused`)."""
+    suite = Suite(suite_id="mini", queries=[Query(id="M1", text="detect niches", category="missing-prereq")])
+    cells = plan_cells(suite, system="stat", driver="staged", ablation="A0", policy="scripted", backbone="scripted", seeds=1, out=tmp_path / "res", data_root=None)
+    system = StatSystem(registry=registry, llm_factory=_llm, session_factory=lambda cell: make_session("S1_cell_gene_noCT"))
+    (res,) = run(system, cells)
+    assert res.exit_status == "refused" and res.refusal["reason_kind"] == "missing_prereq" and res.refusal["named_requirement"] == "obs:celltype"
 

@@ -154,3 +154,17 @@ def test_a_model_that_calls_the_file_met_on_the_first_pass_is_asked_for_the_file
     assert asked, "the met verdict without a file must become a question for the file"
     assert [e.skill for e in events if e.type == "skill_selected"] == ["mini-annotate-ref", "mini-annotate"]
     assert not any("made_up_reference" in "\n".join(m["content"] for m in r.messages) for r in _calls(agent, "generator"))
+
+
+def test_the_switch_note_survives_a_complete_query_written_by_the_verifier(registry_with_ref):
+    def rewriting(role, messages, schema):
+        text = "\n".join(getattr(m, "content", "") for m in messages)
+        if role == "verifier" and "(mini-annotate)" in text:
+            return json.dumps({"prerequisites_met": True, "complete_query": "Annotate the cell types of slice 0 from clusters and marker genes."})
+        return responder(role, messages, schema)
+
+    agent = make_agent(registry_with_ref, kind="S1_cell_gene_noCT", responder=rewriting, mode="interactive", policy=ScriptedPolicy([], skill_pick=1, default=FALLBACK))
+    events = asyncio.run(collect(agent.run_turn("annotate cell types in this brain cortex tissue")))
+    assert [e.skill for e in events if e.type == "skill_selected"] == ["mini-annotate-ref", "mini-annotate"]
+    prompts = ["\n".join(m["content"] for m in r.messages) for r in _calls(agent, "generator")]
+    assert prompts and all("from clusters and marker genes" in p and "no such file is in this session" in p for p in prompts)

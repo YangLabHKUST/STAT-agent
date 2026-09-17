@@ -78,6 +78,24 @@ def content_text(message: Any) -> str:
     return str(content)
 
 
+PROVIDER_ERROR_NAMES = ("APIConnectionError", "OpenAIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "ServiceUnavailableError", "ConnectError", "ReadTimeout", "ConnectTimeout", "RemoteProtocolError", "ConnectionError", "TimeoutError", "IncompleteRead", "ChunkedEncodingError")
+PROVIDER_ERROR_TEXT = ("connection error", "connection reset", "connection aborted", "timed out", "temporarily unavailable", "overloaded", "rate limit", "bad gateway", "gateway time", "server error", "empty response", "eof occurred", "error code: 429", "error code: 5", "error code: 408")
+
+
+def is_provider_error(message: str, code: str | None = None) -> bool:
+    """A network or provider-side failure (worth retrying), not a failure of the request or of STAT."""
+    if code and code in PROVIDER_ERROR_NAMES:
+        return True
+    msg = (message or "").lower()
+    return any(n.lower() in msg for n in PROVIDER_ERROR_NAMES) or any(t in msg for t in PROVIDER_ERROR_TEXT)
+
+
+def is_provider_exception(exc: BaseException) -> bool:
+    """``is_provider_error`` for an exception: its message or any class it inherits from names a provider failure
+    (``langchain_openai`` re-raises ``openai.APIConnectionError`` as its own ``OpenAIConnectionError``)."""
+    return any(is_provider_error(str(exc), c.__name__) for c in type(exc).__mro__)
+
+
 def messages_to_records(messages: Sequence[Any]) -> list[dict[str, str]]:
     recs = []
     for m in messages:
@@ -358,4 +376,4 @@ class LLMClient:
                 logger.debug("usage event emit failed: %s", exc)
 
 
-__all__ = ["LLMClient", "Completion", "to_lc_messages", "content_text", "messages_to_records"]
+__all__ = ["LLMClient", "Completion", "to_lc_messages", "content_text", "messages_to_records", "is_provider_error", "is_provider_exception"]

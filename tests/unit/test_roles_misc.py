@@ -222,6 +222,38 @@ def test_llm_backend_shim_runs_on_the_client():
         LLMBackend()
 
 
+def test_llm_backend_retries_provider_failures_only(monkeypatch):
+    """Skill code's model call retries a network or provider failure; any other error reaches the skill at once (B63)."""
+    from stat_agent.agent import llm_backend
+    from stat_agent.llm import LLMClient
+
+    monkeypatch.setattr(llm_backend, "RETRY_DELAYS_S", (0, 0))
+
+    class APIConnectionError(Exception):
+        pass
+
+    calls: list = []
+
+    def backend(fail_first: int, exc: Exception):
+        def responder(role, messages, schema):
+            calls.append(role)
+            if len(calls) <= fail_first:
+                raise exc
+            return '{"0": "T cells"}'
+
+        return llm_backend.LLMBackend(client=LLMClient(None, model_name="scripted", responder=responder))
+
+    assert asyncio.run(backend(2, APIConnectionError("Connection error.")).run("name the clusters")) == '{"0": "T cells"}' and len(calls) == 3
+    calls.clear()
+    with pytest.raises(APIConnectionError):
+        asyncio.run(backend(99, APIConnectionError("Connection error.")).run("name the clusters"))
+    assert len(calls) == 3  # both retries used, then the failure reaches the skill
+    calls.clear()
+    with pytest.raises(ValueError):
+        asyncio.run(backend(99, ValueError("unknown model")).run("name the clusters"))
+    assert len(calls) == 1
+
+
 def test_state_text_names_producers_and_viewer_edits():
     """The artefact block given to the roles names each artefact's producer (skill or code and the
     turn, or the viewer edit) and the recorded stale reason, so a direct answer about what is out of

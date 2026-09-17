@@ -160,24 +160,17 @@ def annotate_celltype_clustering(
     print(f"\nAnnotating clusters using LLM...")
     print(f"  Tissue context: {tissue_type}")
 
-    try:
-        cluster_annotations = llm_function(markers_dict, tissue_type)
-        print(f"  ✓ LLM annotation complete")
+    # A failed call raises: cluster numbers are never returned as cell types
+    cluster_annotations = llm_function(markers_dict, tissue_type)
+    if not isinstance(cluster_annotations, dict):
+        raise ValueError(f"LLM function must return dict, got {type(cluster_annotations)}")
+    print(f"  ✓ LLM annotation complete")
 
-        # Validate annotations
-        if not isinstance(cluster_annotations, dict):
-            raise ValueError(f"LLM function must return dict, got {type(cluster_annotations)}")
-
-        # Check all clusters are annotated
-        for cluster in adata.obs['leiden'].cat.categories:
-            if str(cluster) not in cluster_annotations:
-                print(f"  ⚠️  Warning: Cluster {cluster} not annotated, marking as 'Unknown'")
-                cluster_annotations[str(cluster)] = 'Unknown'
-
-    except Exception as e:
-        print(f"  ❌ LLM annotation failed: {e}")
-        print(f"  Falling back to generic cluster labels")
-        cluster_annotations = {str(c): f'Cluster_{c}' for c in adata.obs['leiden'].cat.categories}
+    # Check all clusters are annotated
+    for cluster in adata.obs['leiden'].cat.categories:
+        if str(cluster) not in cluster_annotations:
+            print(f"  ⚠️  Warning: Cluster {cluster} not annotated, marking as 'Unknown'")
+            cluster_annotations[str(cluster)] = 'Unknown'
 
     # Handle small clusters
     for cluster, size in cluster_sizes.items():

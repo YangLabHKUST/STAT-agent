@@ -17,6 +17,7 @@ from stat_agent.agent.policy import AutoPolicy, InteractivePolicy, ScriptedPolic
 from stat_agent.core import SimpleSession
 from stat_agent.events import ListEmitter
 from stat_agent.llm import CallLogger, LLMClient, UsageMeter, make_spec
+from stat_agent.llm.client import is_provider_error, is_provider_exception
 from stat_agent.skills import SkillRegistry
 from stat_bench.result import RunResult, software_info
 from stat_bench.score.sse import detect_sse
@@ -120,7 +121,7 @@ class StatSystem:
             turn_errors = [e for e in events if e.type == "turn_error"]
             if res.timed_out:
                 res.exit_status = "timeout"
-            elif turn_errors and _is_provider_error(turn_errors[-1].message, turn_errors[-1].code):
+            elif turn_errors and is_provider_error(turn_errors[-1].message, turn_errors[-1].code):
                 res.exit_status = "provider_error"
             # interactive/scripted-miss: a pending prompt ends the run
             elif agent.is_waiting:
@@ -145,6 +146,11 @@ class StatSystem:
             if refusals:
                 res.refusal = {"refused": True, "reason_kind": refusals[0].kind, "reason_text": refusals[0].reason, "named_requirement": refusals[0].requirement}
                 res.exit_status = "refused" if res.exit_status != "ok" else res.exit_status
+            elif res.exit_status == "partial" and not any(e.type == "code_block_started" for e in events) and any(v.status == "not_obtainable" for e in events if e.type == "verify_complete" for v in e.verdicts):
+                # a registered skill's missing prerequisite ends in advice, a method card's in a refusal event: same outcome, same label
+                advice = [e for e in events if e.type == "advice"]
+                res.refusal = {"refused": True, "reason_kind": "missing_prereq", "reason_text": advice[-1].message if advice else "", "named_requirement": (advice[-1].unmet or [None])[0] if advice else None}
+                res.exit_status = "refused"
             cards = [e for e in events if e.type == "method_card"]
             if cards:
                 res.method_card = {"used": True, "provisional": True, **cards[0].card}
@@ -167,7 +173,7 @@ class StatSystem:
             res.sse = detect_sse(res, session)
             agent.save_state()
         except Exception as exc:  # noqa: BLE001
-            res.exit_status = "provider_error" if any(_is_provider_error(str(exc), c.__name__) for c in type(exc).__mro__) else "crash"
+            res.exit_status = "provider_error" if is_provider_exception(exc) else "crash"
             res.errors.append({"stage": "run", "type": type(exc).__name__, "message": str(exc)[:2000]})
             res.wall_s = time.time() - t0
         finally:
@@ -183,18 +189,6 @@ def _copy(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if subprocess.run(["cp", "-c", str(src), str(dst)], capture_output=True).returncode != 0:
         shutil.copy2(src, dst)
-
-
-_PROVIDER_ERROR_NAMES = ("APIConnectionError", "OpenAIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "ServiceUnavailableError", "ConnectError", "ReadTimeout", "ConnectTimeout", "RemoteProtocolError", "ConnectionError", "TimeoutError", "IncompleteRead", "ChunkedEncodingError")
-_PROVIDER_ERROR_TEXT = ("connection error", "connection reset", "connection aborted", "timed out", "temporarily unavailable", "overloaded", "rate limit", "bad gateway", "gateway time", "server error", "empty response", "eof occurred", "error code: 429", "error code: 5", "error code: 408")
-
-
-def _is_provider_error(message: str, code: str | None = None) -> bool:
-    """A network or provider-side failure (retried by the caller, reported as provider_error), not a STAT failure."""
-    if code and code in _PROVIDER_ERROR_NAMES:
-        return True
-    msg = (message or "").lower()
-    return any(n.lower() in msg for n in _PROVIDER_ERROR_NAMES) or any(t in msg for t in _PROVIDER_ERROR_TEXT)
 
 
 def _decisions(events: list) -> dict[str, Any]:

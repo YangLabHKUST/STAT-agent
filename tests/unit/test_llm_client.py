@@ -112,3 +112,12 @@ def test_parse_json_recovers_prose_python_literals_and_unclosed_fences():
     with pytest.raises(StructuredOutputError):
         parse_json_to(Plan, "prose with {'group': 'x'} and nothing else")
     assert extract_json("see {'a': 1} then {\"b\": 2}") == "{'a': 1}"  # the first candidate, as before
+
+
+def test_poe_models_stream_without_web_search():
+    """Poe's Claude bots may reason for ten minutes before the first word of the reply, and the server cuts a reply
+    that has sent nothing for about that long; streamed, the reasoning keeps it alive (B63)."""
+    from stat_agent.llm import make_model
+
+    model = make_model("poe/claude-sonnet-4.6", api_key="test-key")
+    assert model.streaming and model.stream_usage and model.extra_body == {"web_search": False}
