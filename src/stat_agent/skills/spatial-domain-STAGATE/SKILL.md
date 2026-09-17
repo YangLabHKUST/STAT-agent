@@ -75,10 +75,19 @@ import STAGATE_pyG as STAGATE
 # Ensure float64 for spatial coordinates
 adata.obsm['spatial'] = adata.obsm['spatial'].astype(np.float64)
 
-# Build spatial graph using radius cutoff (recommended over k_cutoff for stability)
-# Adjust rad_cutoff based on coordinate scale: ~150 for pixel coords, ~50 for normalized
-STAGATE.Cal_Spatial_Net(adata, rad_cutoff=150)
-print(f"  Spatial graph built")
+# Build the spatial graph with a radius derived from the coordinates, never a fixed number:
+# coordinates come in pixels (Visium), micrometres (Xenium) or millimetres (MERFISH), and a fixed
+# radius such as 150 connects every MERFISH cell to every other cell (a billion edges, memory exhausted).
+# 1.1 x the median distance to the 6th nearest neighbour keeps the first ring of a Visium hex grid
+# (about 6 neighbours, the same graph as radius 150 on Visium pixels) and gives about 7-8 neighbours
+# per cell on cell-level data.
+from sklearn.neighbors import NearestNeighbors
+coords = adata.obsm['spatial']
+d6 = NearestNeighbors(n_neighbors=7).fit(coords).kneighbors(coords)[0][:, 6]
+rad_cutoff = 1.1 * float(np.median(d6))
+STAGATE.Cal_Spatial_Net(adata, rad_cutoff=rad_cutoff)
+mean_neighbours = adata.uns['Spatial_Net'].shape[0] / adata.n_obs
+print(f"  Spatial graph built: rad_cutoff={rad_cutoff:.4g} (coordinate units), {mean_neighbours:.1f} neighbours per cell/spot")
 
 # Train STAGATE
 adata = STAGATE.train_STAGATE(
@@ -144,6 +153,7 @@ slice_obj.adata.uns['spatial_domain_params'] = {
     'n_domains': n_domains,
     'hidden_dims': [512, 30],
     'n_epochs': 1000,
+    'rad_cutoff': rad_cutoff,
 }
 
 print(f"  Stored spatial_domain in adata.obs ({n_domains} domains)")
@@ -184,7 +194,7 @@ plt.show()
 | Parameter | Default | Options | Description |
 |-----------|---------|---------|-------------|
 | `n_domains` | 7 | 2-20 or None (auto) | Number of spatial domains |
-| `k_cutoff` | 10 | 4-30 | Spatial neighbors |
+| `rad_cutoff` | 1.1 × median distance to the 6th nearest neighbour | derived from the coordinates | Spatial neighbour radius (about 6 neighbours per spot, 7-8 per cell); never a fixed number, since coordinate units differ between platforms |
 | `hidden_dims` | [512, 30] | — | Autoencoder hidden dimensions |
 | `n_epochs` | 1000 | 200-2000 | Training epochs |
 

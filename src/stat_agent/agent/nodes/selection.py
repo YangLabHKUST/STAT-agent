@@ -33,6 +33,7 @@ from stat_agent.events.catalogue import (
 )
 from stat_agent.memory.context import turn_steps_block
 from stat_agent.roles.planner import PlanStep
+from stat_agent.roles.verifier import required_file_prerequisites
 from stat_agent.skills.filter import check_compatibility, filter_skills
 from stat_agent.skills.schema import MethodCard, SkillFrontmatter
 
@@ -192,6 +193,19 @@ async def synthesize_card_node(state: TurnState, runtime: LGRuntime[Context]):
     return Command(update={"current": current}, goto="verify")
 
 
+def _file_free_alternative(ctx: Context, current: dict, contract: SkillFrontmatter) -> str | None:
+    """A compatible, enabled skill that produces everything the declined skill would, without needing a file."""
+    wanted = {a.id for a in contract.produces}
+    skip = {current.get("skill"), *(current.get("tried_skills") or [])}
+    for slug in current.get("compatible") or []:
+        if not wanted or slug in skip or not ctx.registry.is_enabled(slug):
+            continue
+        meta = ctx.registry.get(slug).meta
+        if wanted <= {a.id for a in meta.produces} and not required_file_prerequisites(meta):
+            return slug
+    return None
+
+
 async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
     if cancelled(ctx):
@@ -200,6 +214,8 @@ async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
     current = dict(state["current"])
     step_dict = current_step(state) or {}
     step = PlanStep.model_validate(step_dict)
+    if current.get("switch_note"):  # a re-entry after switching away from a skill that needed a missing file
+        step = step.model_copy(update={"refined_query": step.refined_query + current["switch_note"]})
     contract = _contract(ctx, current)
     slug = current.get("skill") or (contract.slug if contract else None)
     if contract is None or not ctx.ablation.verifier:
@@ -208,35 +224,48 @@ async def verify_node(state: TurnState, runtime: LGRuntime[Context]):
         return Command(update={"current": current}, goto="generate")
     summary = ctx.summary()
     stale = ctx.ledger.stale_ids() if ctx.ablation.provenance else []
-    ctx.skill_defaults = dict(getattr(contract, "defaults", None) or {})  # pre-answers for the auto policy
-    verdict = await ctx.roles.verifier.verify(
-        step,
-        contract,
-        summary,
-        answers=answers_for(state, "verifier", skill=slug, step=current["step_number"]),
-        memory=memory_of(state, ctx) if ctx.ablation.memory else None,
-        earlier_answers=memory_of(state, ctx).recent_answers("verifier") if ctx.ablation.memory else (),
-        turn_steps=turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else "",
-        stale=stale,
-        skill_name=ctx.registry.get(slug).name if current.get("skill") else getattr(contract, "method_name", None),
-        turn_id=state["turn_id"],
-        step_index=current["step_number"],
-    )
-    verdicts = [VerdictView(prerequisite=m, status="not_obtainable" if verdict.kind == "decline" else "ask_user", question=None) for m in verdict.missing] + ([VerdictView(prerequisite="(all)", status="satisfied")] if verdict.kind == "met" else [])
-    ctx.emit(VerifyComplete(step_id=current["step_id"], skill=slug, verdicts=verdicts, decided_by=verdict.decided_by, complete_query=verdict.complete_query))
+    extra: dict[str, Any] = {}
+    while True:
+        ctx.skill_defaults = dict(getattr(contract, "defaults", None) or {})  # pre-answers for the auto policy
+        verdict = await ctx.roles.verifier.verify(
+            step,
+            contract,
+            summary,
+            answers=answers_for(state, "verifier", skill=slug, step=current["step_number"]),
+            memory=memory_of(state, ctx) if ctx.ablation.memory else None,
+            earlier_answers=memory_of(state, ctx).recent_answers("verifier") if ctx.ablation.memory else (),
+            turn_steps=turn_steps_block(state.get("handoffs") or []) if ctx.ablation.memory else "",
+            stale=stale,
+            skill_name=ctx.registry.get(slug).name if current.get("skill") else getattr(contract, "method_name", None),
+            turn_id=state["turn_id"],
+            step_index=current["step_number"],
+        )
+        verdicts = [VerdictView(prerequisite=m, status="not_obtainable" if verdict.kind == "decline" else "ask_user", question=None) for m in verdict.missing] + ([VerdictView(prerequisite="(all)", status="satisfied")] if verdict.kind == "met" else [])
+        ctx.emit(VerifyComplete(step_id=current["step_id"], skill=slug, verdicts=verdicts, decided_by=verdict.decided_by, complete_query=verdict.complete_query))
+        alternative = _file_free_alternative(ctx, current, contract) if verdict.kind == "decline" and verdict.missing_files and current.get("skill") else None
+        if alternative is None:
+            break
+        # the skill needs a file this session does not have: the same result from a skill that needs none
+        declined = ctx.registry.get(slug)
+        ctx.emit(SkillSelected(step_id=current["step_id"], skill=alternative, name=ctx.registry.get(alternative).name, alternatives=[slug]))
+        note = f"\n\nUse {ctx.registry.get(alternative).name} for this step: {declined.name} needs {verdict.missing_files[0]}, and no such file is in this session. Do not refer to any file the session does not contain."
+        current.update(skill=alternative, tried_skills=[*(current.get("tried_skills") or []), slug], switch_note=note)
+        extra["retries"] = 0
+        step = PlanStep.model_validate(step_dict).model_copy(update={"refined_query": PlanStep.model_validate(step_dict).refined_query + note})
+        contract, slug = ctx.registry.get(alternative).meta, alternative
     if verdict.kind == "met":
         current["complete_query"] = verdict.complete_query or step.refined_query
-        return Command(update={"current": current}, goto="generate")
+        return Command(update={"current": current, **extra}, goto="generate")
     if verdict.kind == "ask":
         pending = Interrupt(kind="verifier", step=current["step_number"], questions=verdict.questions, skill=slug)
         emit_prompt(ctx, pending, current["step_id"])
-        return Command(update={"current": current, "pending": pending.model_dump()}, goto="ask_verifier")
+        return Command(update={"current": current, "pending": pending.model_dump(), **extra}, goto="ask_verifier")
     if current.get("contract") and not current.get("skill"):
         ctx.emit(RefusalEvent(step_id=current["step_id"], kind="missing_prereq", requirement=verdict.missing[0] if verdict.missing else None, reason=verdict.advice or ""))
     else:
         ctx.emit(AdviceEvent(message=verdict.advice or "", skill=slug, step_id=current["step_id"], unmet=verdict.missing))
     current.update(status="blocked", mode="advice", advice=verdict.advice or "", unmet=verdict.missing)
-    return Command(update={"current": current}, goto="block_step")
+    return Command(update={"current": current, **extra}, goto="block_step")
 
 
 async def ask_verifier_node(state: TurnState, runtime: LGRuntime[Context]):

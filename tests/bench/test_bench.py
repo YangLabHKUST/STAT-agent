@@ -120,3 +120,14 @@ def test_session_bench_scripts(script_name, registry):
     result = asyncio.run(run_script(script, factory, mode="scripted"))
     failing = [(t["t"], v) for t in result["turns"] for v in t["verifiers"] if not v["pass"]] + [("final", v) for v in result["final"] if not v["pass"]]
     assert result["all_pass"], failing or [t for t in result["turns"] if t.get("expect_ok") is False]
+
+
+def test_provider_error_classification():
+    from stat_bench.systems.stat import _is_provider_error
+
+    # langchain_openai wraps openai.APIConnectionError as OpenAIConnectionError("Connection error.")
+    assert _is_provider_error("Connection error.", "OpenAIConnectionError")
+    assert _is_provider_error("Connection error.", None)
+    assert _is_provider_error("Error code: 503 - upstream unavailable", "InternalServerError")
+    assert not _is_provider_error("KeyError: 'celltype'", "KeyError")
+

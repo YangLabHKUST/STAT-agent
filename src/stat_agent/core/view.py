@@ -12,6 +12,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class LabelColumn(BaseModel):
+    """An obs column that holds a small set of text labels (cell types, layers, domains, clusters)."""
+
+    n_labels: int
+    examples: list[str] = Field(default_factory=list)  # the first labels in sorted order
+
+
 class SliceSummary(BaseModel):
     slice_id: int
     tissue_name: str = ""
@@ -27,6 +34,7 @@ class SliceSummary(BaseModel):
     image_names: list[str] = Field(default_factory=list)
     image_match: str = ""
     obs_columns: list[str] = Field(default_factory=list)
+    label_columns: dict[str, LabelColumn] = Field(default_factory=dict)  # obs columns that hold labels, by name
     obsm_keys: list[str] = Field(default_factory=list)
     uns_keys: list[str] = Field(default_factory=list)
     var_columns: list[str] = Field(default_factory=list)

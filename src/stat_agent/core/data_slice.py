@@ -11,6 +11,7 @@ from typing import Any
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 
 from stat_agent.core.colors import extract_existing_colors, generate_distinct_colors
 
@@ -142,6 +143,29 @@ class DataSlice:
         return colors
 
     # ---- summaries -------------------------------------------------------------------
+    def label_columns(self, max_labels: int = 1000, n_examples: int = 10) -> dict[str, dict[str, Any]]:
+        """Categorical or text obs columns that hold labels: ``{name: {n_labels, examples}}``.
+
+        A column with more distinct values than ``max_labels`` or than half the observations is an
+        identifier (a barcode, a cell id), not a label column. Text columns are screened on their
+        first 5,000 values before the full column is scanned."""
+        out: dict[str, dict[str, Any]] = {}
+        obs = self.adata.obs
+        limit = max(2, min(max_labels, self.n_obs // 2))
+        for col in obs.columns:
+            values = obs[col]
+            if isinstance(values.dtype, pd.CategoricalDtype):
+                labels = [str(c) for c in values.cat.remove_unused_categories().cat.categories]
+            elif pd.api.types.is_object_dtype(values.dtype) or pd.api.types.is_string_dtype(values.dtype):
+                if pd.unique(values.iloc[:5000].dropna()).size > limit:
+                    continue
+                labels = sorted({str(v) for v in pd.unique(values.dropna())})
+            else:
+                continue
+            if 2 <= len(labels) <= limit:
+                out[str(col)] = {"n_labels": len(labels), "examples": sorted(labels)[:n_examples]}
+        return out
+
     def get_summary(self) -> dict[str, Any]:
         """JSON-serialisable summary used by the session view and the web layer."""
         obs_columns = [str(c) for c in self.adata.obs.columns]
@@ -161,6 +185,7 @@ class DataSlice:
             "image_match": str(self.metadata.get("image_match", "")),
             "tissue_name": self.tissue_name,
             "obs_columns": obs_columns,
+            "label_columns": self.label_columns(),
             "obsm_keys": [str(k) for k in self.adata.obsm.keys()],
             "uns_keys": [str(k) for k in self.adata.uns.keys()],
             "var_columns": [str(c) for c in self.adata.var.columns],

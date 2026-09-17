@@ -124,12 +124,16 @@ def test_verifier_prepass_is_advisory_for_provisional_cards():
     step = PlanStep(step_number=1, description="x", target_slice_ids=[0], refined_query="compute something")
     base = {"description": "d" * 30, "filter_requirements": {}, "prerequisites": ["p"], "produces": []}
     registered = SkillFrontmatter.model_validate({"name": "reg", "slug": "reg", **base, "consumes": ["obs:missing_key"]})
-    assert VerifierRole.contract_pass(registered, step, summary, []).kind == "decline"
+    # the slice has a label column (celltype), so the absent key is asked about once, then declined when no column is named
+    asked = VerifierRole.contract_pass(registered, step, summary, [])
+    assert asked.kind == "ask" and asked.decided_by == "contract" and "obs['missing_key']" in asked.questions[0] and "celltype (4 labels" in asked.questions[0]
+    declined = VerifierRole.contract_pass(registered, step, summary, [], answers=[(asked.questions[0], "no idea")])
+    assert declined.kind == "decline"
     card = MethodCard.model_validate({"method_name": "M", **base, "consumes": ["obs:missing_key"], "outline": [], "risks": [], "confidence": 0.5})
     assert VerifierRole.contract_pass(card, step, summary, []) is None
     card_counts = MethodCard.model_validate({"method_name": "M", **base, "consumes": ["layers:counts"], "outline": [], "risks": [], "confidence": 0.5})
     assert VerifierRole.contract_pass(card_counts, step, summary, []) is None  # raw counts live in X; not a hard decline
-    assert "annotation" not in VerifierRole.contract_pass(registered, step, summary, []).advice
+    assert "annotation" not in declined.advice
     card_layers = MethodCard.model_validate({"method_name": "M", **base, "consumes": ["layers:spliced", "layers:unspliced"], "outline": [], "risks": [], "confidence": 0.5})
     verdict = VerifierRole.contract_pass(card_layers, step, summary, [])
     assert verdict.kind == "decline" and verdict.missing == ["layers:spliced", "layers:unspliced"]

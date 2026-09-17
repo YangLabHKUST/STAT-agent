@@ -167,7 +167,7 @@ class StatSystem:
             res.sse = detect_sse(res, session)
             agent.save_state()
         except Exception as exc:  # noqa: BLE001
-            res.exit_status = "provider_error" if _is_provider_error(str(exc), type(exc).__name__) else "crash"
+            res.exit_status = "provider_error" if any(_is_provider_error(str(exc), c.__name__) for c in type(exc).__mro__) else "crash"
             res.errors.append({"stage": "run", "type": type(exc).__name__, "message": str(exc)[:2000]})
             res.wall_s = time.time() - t0
         finally:
@@ -185,8 +185,8 @@ def _copy(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
-_PROVIDER_ERROR_NAMES = ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "ServiceUnavailableError", "ConnectError", "ReadTimeout", "ConnectTimeout", "RemoteProtocolError", "ConnectionError", "TimeoutError", "IncompleteRead", "ChunkedEncodingError")
-_PROVIDER_ERROR_TEXT = ("connection reset", "connection aborted", "timed out", "temporarily unavailable", "overloaded", "rate limit", "bad gateway", "gateway time", "server error", "empty response", "eof occurred", "error code: 429", "error code: 5", "error code: 408")
+_PROVIDER_ERROR_NAMES = ("APIConnectionError", "OpenAIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "ServiceUnavailableError", "ConnectError", "ReadTimeout", "ConnectTimeout", "RemoteProtocolError", "ConnectionError", "TimeoutError", "IncompleteRead", "ChunkedEncodingError")
+_PROVIDER_ERROR_TEXT = ("connection error", "connection reset", "connection aborted", "timed out", "temporarily unavailable", "overloaded", "rate limit", "bad gateway", "gateway time", "server error", "empty response", "eof occurred", "error code: 429", "error code: 5", "error code: 408")
 
 
 def _is_provider_error(message: str, code: str | None = None) -> bool:
