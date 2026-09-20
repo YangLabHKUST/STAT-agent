@@ -6,7 +6,9 @@ from pydantic import BaseModel
 
 from stat_agent.roles.base import Role
 
-UNFIXABLE = {"MemoryError", "TimeoutError", "Timeout", "PermissionError", "KeyboardInterrupt", "Cancelled", "SafetyViolation", "RuntimeBusy"}
+# a SafetyViolation is not here: the refused code never ran and the violation names the call and the line, so it is
+# a generation error to repair once, like a parse error; the rewrite goes through the same check before it runs
+UNFIXABLE = {"MemoryError", "TimeoutError", "Timeout", "PermissionError", "KeyboardInterrupt", "Cancelled", "RuntimeBusy"}
 
 
 class Reflection(BaseModel):

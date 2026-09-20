@@ -14,10 +14,10 @@ default_skill: true
 schema_version: 2
 version: "2.0"
 consumes: [obs:celltype]
-produces: [uns:liana_res, uns:cell_communication, obsp:spatial_connectivities]
+produces: [uns:liana_res, uns:cell_communication]
 platforms: [linux, macos, windows]
 dependencies:
-  python: [liana, squidpy, plotnine]
+  python: [liana, plotnine]
 defaults:
   "Species information": "human"
 ---
@@ -95,59 +95,23 @@ print("=" * 60)
 adata.obsm['spatial'] = adata.obs[['x', 'y']].to_numpy()
 
 # Check if data needs normalization
-# LIANA expects log-normalized data in adata.X; raw counts can go in adata.raw
-use_raw = False
-if adata.raw is not None:
-    use_raw = True
-    print("  Found adata.raw, will use raw counts for cluster analysis")
-else:
-    # Detect raw counts: integer values with large max
-    sample = adata.X[:100]
-    if hasattr(sample, 'toarray'):
-        sample = sample.toarray()
-    if np.allclose(sample, sample.astype(int)) and sample.max() > 20:
+# LIANA scores the expression this skill log-normalizes in adata.X (see use_raw=False below):
+# pointing LIANA at adata.raw would score the raw counts and throw the normalization away.
+# Detect raw counts: counts are integer-valued. Draw the sample from the whole slice, because
+# the leading cells of a targeted panel can hold small counts that look like normalized values.
+rows = np.random.default_rng(0).choice(adata.n_obs, size=min(500, adata.n_obs), replace=False)
+sample = adata.X[rows]
+if hasattr(sample, 'toarray'):
+    sample = sample.toarray()
+if np.allclose(sample, sample.astype(int)):
+    if adata.raw is None:
         adata.raw = adata.copy()
-        sc.pp.normalize_total(adata, target_sum=1e4)
-        sc.pp.log1p(adata)
-        use_raw = True
-        print("  Detected raw counts -> normalized and log-transformed")
         print("  Raw counts stored in adata.raw")
-    else:
-        print("  Data appears already normalized")
-
-# Compute spatial neighbors (required for spatial bivariate analysis)
-print("  Computing spatial neighbors...")
-try:
-    import squidpy as sq
-    sq.gr.spatial_neighbors(
-        adata,
-        coord_type="generic",
-        n_neighs=min(30, max(6, adata.n_obs // 100)),
-        delaunay=True,
-        set_diag=False,
-    )
-    print(f"  ✓ Spatial neighbors computed via squidpy")
-except ImportError:
-    # Fallback: manual KNN using scipy
-    from scipy.spatial import KDTree
-    from scipy.sparse import csr_matrix
-
-    coords = adata.obsm['spatial']
-    n_neighbors = min(30, max(6, adata.n_obs // 100))
-    tree = KDTree(coords)
-    distances, indices = tree.query(coords, k=n_neighbors + 1)
-
-    rows, cols, vals = [], [], []
-    for i in range(len(coords)):
-        for j_idx in range(1, n_neighbors + 1):
-            j = indices[i, j_idx]
-            rows.append(i)
-            cols.append(j)
-            vals.append(1.0)
-
-    connectivity = csr_matrix((vals, (rows, cols)), shape=(len(coords), len(coords)))
-    adata.obsp['spatial_connectivities'] = connectivity
-    print(f"  ✓ Spatial neighbors computed via KDTree (n_neighbors={n_neighbors})")
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    sc.pp.log1p(adata)
+    print("  Detected raw counts -> normalized and log-transformed")
+else:
+    print("  Data is already normalized")
 
 print(f"✓ Preprocessing complete")
 ```
@@ -168,7 +132,7 @@ li.mt.rank_aggregate(
     min_cells=3,         # Min cells per cell type expressing ligand or receptor
     n_perms=1000,        # Permutations for p-value calculation
     verbose=False,
-    use_raw=use_raw,
+    use_raw=False,      # adata.X holds the log-normalized expression LIANA scores
 )
 
 # Extract results
@@ -234,9 +198,6 @@ adata.uns['cell_communication'] = summary
 # Write results back to session slice
 slice_obj.adata.uns['liana_res'] = adata.uns['liana_res']
 slice_obj.adata.uns['cell_communication'] = adata.uns['cell_communication']
-
-if 'spatial_connectivities' in adata.obsp:
-    slice_obj.adata.obsp['spatial_connectivities'] = adata.obsp['spatial_connectivities']
 
 print(f"✓ Results stored in slice_obj.adata")
 print(f"  - adata.uns['liana_res']: Full cluster analysis results DataFrame")

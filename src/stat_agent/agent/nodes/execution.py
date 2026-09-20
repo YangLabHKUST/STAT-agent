@@ -319,7 +319,8 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
 
             error_text = res.error
             success = res.success
-            can_reflect = (not success) and attempt <= max_attempts and should_attempt_fix(res.error_type) and not res.refused and not res.timed_out
+            # a refusal is final, except the safety check's: that one the reflector may rewrite, and the rewrite is checked again
+            can_reflect = (not success) and attempt <= max_attempts and should_attempt_fix(res.error_type) and (not res.refused or res.error_type == "SafetyViolation") and not res.timed_out
             ctx.emit(
                 CodeBlockDone(
                     block_id=block_id,

@@ -83,6 +83,24 @@ async def finish_step_node(state: TurnState, runtime: LGRuntime[Context]):
     return Command(update=update, goto="select_step")
 
 
+def _shared(parts: list[str], total: int = 600) -> str:
+    """The steps' texts joined within ``total`` characters, every step keeping a share: cutting the joined text
+    instead leaves a turn of several steps in the history as its first step only."""
+    parts = [p for p in parts if p]
+    budget = total - 2 * (len(parts) - 1)
+    cut: dict[int, str] = {}
+    for left, i in zip(range(len(parts), 0, -1), sorted(range(len(parts)), key=lambda i: len(parts[i])), strict=True):
+        cut[i] = parts[i][: max(0, budget // left)]  # shortest first, so what a short step leaves goes to the longer ones
+        budget -= len(cut[i])
+    return "; ".join(cut[i] for i in range(len(parts)) if cut[i])
+
+
+def _in_rotation(rows: list[list[str]]) -> list[str]:
+    """The first finding of every step before the second of any: the history shows the first three of a turn, and
+    in step order those are all the first step's."""
+    return [r[i] for i in range(max(map(len, rows), default=0)) for r in rows if i < len(r)]
+
+
 async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
     ctx = runtime.context
     mark_step(ctx, None)
@@ -97,9 +115,9 @@ async def finish_turn_node(state: TurnState, runtime: LGRuntime[Context]):
         index=state.get("turn_index", 0),
         query=state["query"],
         status=status,
-        response_summary="; ".join(h.summary for h in handoffs if h.summary)[:600],
-        data_changes="; ".join(h.data_changes for h in handoffs if h.data_changes)[:600],
-        key_findings=[f for h in handoffs for f in h.key_findings][:6],
+        response_summary=_shared([h.summary for h in handoffs]),
+        data_changes=_shared([h.data_changes for h in handoffs]),
+        key_findings=_in_rotation([h.key_findings for h in handoffs])[:6],
         handoffs=handoffs,
         assumptions=[AssumptionRecord.model_validate(a) for a in state.get("assumptions", [])],
         answers=[dict(a) for a in (state.get("answers") or [])],

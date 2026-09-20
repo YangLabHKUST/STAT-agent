@@ -139,6 +139,8 @@ def test_provider_error_classification():
 
     assert is_provider_exception(OpenAIConnectionError("Connection error."))
     assert not is_provider_exception(ValueError("LLM function must return dict"))
+    # langchain-openai's streaming gap limit (Q38 try7/try8): a pause at the provider, not a STAT failure
+    assert is_provider_error("No streaming chunk received for 120.0s (model=claude-sonnet-4.6, chunks_received=4).", "StreamChunkTimeoutError")
 
 
 def test_a_verifier_decline_is_recorded_as_a_refusal(tmp_path, registry):

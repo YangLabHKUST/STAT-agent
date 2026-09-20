@@ -138,6 +138,18 @@ assert len(overlap) >= 2, (
     f"Check species setting (current: {species}) and gene name format."
 )
 
+# Background: every gene in the size-filtered GO library (gseapy's default when none is given).
+# A targeted panel was designed around chosen genes, so against this background the terms can
+# describe the panel rather than the gene list; say so wherever the slice measures a panel
+n_measured = slice_obj.adata.n_vars
+panel_note = None
+if n_measured < 10000:
+    panel_note = (
+        f"This slice measures {n_measured:,} genes (a targeted panel) and the background is the whole GO library "
+        f"({len(all_go_genes):,} genes), so enriched terms can reflect the genes chosen for the panel rather than "
+        f"the gene list ({len(gene_list):,} of the {n_measured:,} measured genes are in the list)."
+    )
+    print(f"  Note: {panel_note}")
 
 # Run enrichment using gseapy enrich (local Fisher's exact test)
 enr = gp.enrich(
@@ -176,7 +188,9 @@ slice_obj.adata.uns['go_params'] = {
     'go_library': go_library,
     'fdr_threshold': fdr_threshold,
     'n_significant': len(significant),
-    'background_size': len(slice_obj.adata.var_names),
+    'background': 'GO library (all genes in the size-filtered gene sets)',
+    'background_size': len(all_go_genes),
+    'panel_note': panel_note,
 }
 
 # Print top results
@@ -306,7 +320,7 @@ else:
 ## Notes
 
 - **Gene list input**: The skill reads from `adata.uns['go_genes']`. The agent should store the gene list there before invoking this skill. The list is just plain gene name strings, e.g., `['CD4', 'FOXP3', 'IL2RA']`.
-- **Background genes**: Uses all genes in `adata.var_names` as background for the statistical test. This is the standard approach for spatial transcriptomics data.
+- **Background genes**: all genes in the size-filtered GO library (gseapy's default), stored as `background` and `background_size` in `adata.uns['go_params']`. On a targeted panel (fewer than 10,000 measured genes) the skill prints and stores `panel_note`: enriched terms can reflect the genes the panel was designed around, and a list that covers most of the panel says little about the list itself, so report such terms as descriptive, not as evidence that a pathway is active.
 - **Gene name format**: GO databases use uppercase for human (e.g., `FOXP3`) and title case for mouse (e.g., `Foxp3`). The skill auto-detects and converts if needed.
 - **Fisher's exact test**: Tests whether the overlap between your gene list and each GO term is greater than expected by chance. P-values are corrected for multiple testing using Benjamini-Hochberg FDR.
 - **Requires gseapy**: Install with `pip install gseapy`. First run downloads gene set databases (cached afterwards).

@@ -149,10 +149,25 @@ print(f"✓ Stage 7: Niche detection complete!")
 print(f"✓ Found {n_niches} distinct niches")
 print(f"✓ Added 'niche_label' column to slice_obj.adata.obs")
 
-# Show niche distribution
+# Show niche distribution and the schema, so a later step reads this by its real name and dtype
 print(f"\nNiche distribution:")
 print(slice_obj.adata.obs['niche_label'].value_counts().sort_index())
+print(f"obs['niche_label'] dtype: {slice_obj.adata.obs['niche_label'].dtype}; "
+      f"values: {sorted(slice_obj.adata.obs['niche_label'].unique())}")
 ```
+
+## Outputs
+
+`obs['niche_label']` is the only thing this skill stores: one niche id per cell, over the whole slice. The
+ids are the model's own numbering, not names — print `unique()` and use those values rather than assuming a
+range or a label vocabulary.
+
+The skill writes **no composition table**: it does not describe what any niche is made of. A step that needs
+the cell-type composition per niche computes it itself, for example
+`pd.crosstab(adata.obs['niche_label'], adata.obs['celltype'], normalize='index')`. Two things to get right
+when doing so: a crosstab only has a column for a category that is present, so index it by a name taken from
+the frame rather than by one assumed in advance; and say which niches were characterised from computed
+composition rather than inferring a niche's identity from its number.
 
 ## Visualization
 

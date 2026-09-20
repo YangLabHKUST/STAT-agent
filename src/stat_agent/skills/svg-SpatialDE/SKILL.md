@@ -292,8 +292,9 @@ with warnings.catch_warnings():
 from SpatialDE.util import qvalue
 results['qval'] = qvalue(results['pval'].values)
 
-# Sort by q-value
-results = results.sort_values('qval').reset_index(drop=True)
+# Sort by q-value, then by the log-likelihood ratio: hundreds of genes can reach q = 0, and among
+# them the LLR ranks how strongly each follows a spatial pattern (otherwise their order is the file order)
+results = results.sort_values(['qval', 'LLR'], ascending=[True, False]).reset_index(drop=True)
 
 # Count significant genes
 n_significant = (results['qval'] < 0.05).sum()
@@ -304,7 +305,7 @@ print(f"  Significant SVGs (q < 0.05): {n_significant}")
 # Show top SVGs
 print(f"\n  Top 20 spatially variable genes:")
 for _, row in results.head(20).iterrows():
-    print(f"    {row['g']}: q={row['qval']:.2e}, p={row['pval']:.2e}, length_scale={row['l']:.1f}")
+    print(f"    {row['g']}: q={row['qval']:.2e}, LLR={row['LLR']:.1f}, length_scale={row['l']:.1f}")
 ```
 
 ### Stage 5: Store Results

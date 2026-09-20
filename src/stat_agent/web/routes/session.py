@@ -26,7 +26,7 @@ async def create_session(request: Request):
     app = state_of(request)
     body = await parse_body(request, SessionCreate)
     try:
-        app.create_session(body.dataset_dir, session_name=body.session_name, provider=body.provider, model=body.model, api_key=body.api_key, base_url=body.base_url, mode=body.mode, session_dir_to_load=body.session_dir)
+        app.create_session(body.dataset_dir, session_name=body.session_name, provider=body.provider, model=body.model, api_key=body.api_key, base_url=body.base_url, reasoning_effort=body.reasoning_effort, mode=body.mode, session_dir_to_load=body.session_dir)
     except FileNotFoundError as exc:
         raise ApiError("not_found", str(exc), 404) from exc
     except ValueError as exc:

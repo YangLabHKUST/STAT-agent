@@ -97,10 +97,13 @@ print("STAGE 2: Prepare Input Files")
 print("=" * 60)
 
 # CellPhoneDB uses a file-based API: needs counts TSV + metadata TSV
-sample = adata.X[:100]
+# Counts are integer-valued. Draw the sample from the whole slice, because the leading cells of a
+# targeted panel can hold small counts that look like normalized values.
+rows = np.random.default_rng(0).choice(adata.n_obs, size=min(500, adata.n_obs), replace=False)
+sample = adata.X[rows]
 if hasattr(sample, 'toarray'):
     sample = sample.toarray()
-if np.allclose(sample, sample.astype(int)) and sample.max() > 20:
+if np.allclose(sample, sample.astype(int)):
     expr_adata = adata
     counts_source = "adata.X (raw counts)"
     print("  Using adata.X (detected as raw counts)")

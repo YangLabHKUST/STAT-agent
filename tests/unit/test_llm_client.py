@@ -121,3 +121,4 @@ def test_poe_models_stream_without_web_search():
 
     model = make_model("poe/claude-sonnet-4.6", api_key="test-key")
     assert model.streaming and model.stream_usage and model.extra_body == {"web_search": False}
+    assert model.stream_chunk_timeout == 600.0  # a pause between chunks is waited out as long as an unstreamed reply was

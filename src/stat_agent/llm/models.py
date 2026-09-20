@@ -174,6 +174,9 @@ def make_model(spec: ModelSpec | str, **overrides: Any):
         # the connection alive; the reply and its usage are assembled as before.
         kwargs["streaming"] = True
         kwargs["stream_usage"] = True
+        # Poe can also pause for minutes between streamed chunks; langchain-openai's default 120 s gap limit would
+        # end such a call, which unstreamed waited out, so the gap limit is the request timeout
+        kwargs["stream_chunk_timeout"] = spec.timeout
     kwargs.update(spec.extra)
     return ChatOpenAI(**kwargs)
 

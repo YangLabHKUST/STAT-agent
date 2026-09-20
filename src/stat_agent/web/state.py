@@ -87,7 +87,7 @@ class AppState:
         }
 
     # ---- lifecycle ------------------------------------------------------------------------------------------
-    def create_session(self, dataset_dir: str | None, *, session_name: str | None = None, provider: str | None = None, model: str | None = None, api_key: str | None = None, base_url: str | None = None, mode: str | None = None, session_dir_to_load: str | None = None) -> None:
+    def create_session(self, dataset_dir: str | None, *, session_name: str | None = None, provider: str | None = None, model: str | None = None, api_key: str | None = None, base_url: str | None = None, reasoning_effort: str | None = None, mode: str | None = None, session_dir_to_load: str | None = None) -> None:
         with self._lock:
             # validate first: a mistyped path must not destroy the session the user is working in
             if session_dir_to_load:
@@ -116,8 +116,9 @@ class AppState:
             if self.config.llm_responder is not None:
                 llm = LLMClient(None, model_name=model_id, responder=self.config.llm_responder)
             else:
-                llm = LLMClient(spec=make_spec(model_id, provider=provider, api_key=api_key, base_url=base_url))
-            self.llm_config = {"provider": provider, "model": model_id, "base_url": base_url}
+                effort = {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+                llm = LLMClient(spec=make_spec(model_id, provider=provider, api_key=api_key, base_url=base_url, **effort))
+            self.llm_config = {"provider": provider, "model": model_id, "base_url": base_url, "reasoning_effort": reasoning_effort}
             notebook = NotebookLogger(self.session_dir)
             notebook.initialize_notebook(dataset_dir or session_dir_to_load, name)
             self.generation += 1

@@ -86,6 +86,17 @@ def test_safety_refuses_before_running(rt):
     assert r.refused and not r.success and r.error_type == "SafetyViolation" and r.violations
 
 
+def test_a_refused_block_runs_nothing_and_every_call_is_checked_again(rt):
+    """The reflector may rewrite a refused block (the agent's retry), so the check must hold on every call: nothing of a
+    refused block executes, a clean rewrite runs, and a rewrite that still violates is refused again."""
+    r1 = rt.run("marker_before_refusal = 1\nimport subprocess\nsubprocess.run(['true'])")
+    assert r1.refused and "marker_before_refusal" not in rt.namespace and not r1.namespace_added
+    r2 = rt.run("marker_after_rewrite = 2")
+    assert r2.success and not r2.refused and rt.namespace["marker_after_rewrite"] == 2
+    r3 = rt.run("import os\nos.remove('x.tmp')")
+    assert r3.refused and r3.error_type == "SafetyViolation"
+
+
 def test_timeout_interrupts_pure_python_loop(rt):
     t0 = time.time()
     r = rt.run("import time\nwhile True:\n    time.sleep(0.01)", timeout_s=0.5)

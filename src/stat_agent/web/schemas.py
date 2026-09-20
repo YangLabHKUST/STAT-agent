@@ -18,6 +18,7 @@ class SessionCreate(_Body):
     model: str | None = None
     api_key: str | None = None
     base_url: str | None = None
+    reasoning_effort: str | None = None  # passed to the provider as given; unset keeps the provider's default
     mode: Literal["interactive", "auto"] | None = None
     session_dir: str | None = None  # load a saved session instead of a dataset dir
 
