@@ -111,6 +111,70 @@ def test_code_access_scan():
     assert acc.roi_names == {"tumor"} and acc.paths == ["/data/ref.h5ad"]
 
 
+def test_a_region_read_is_recorded_however_the_name_is_spelled():
+    named = {
+        "roi = session.get_roi('a')": {"a"},
+        "roi = session.get_roi(roi_name='a')": {"a"},
+        "d = session.get_roi_data('a', slice_id=0)": {"a"},
+        "for name in ['a', 'b']:\n    roi = session.get_roi(name)": {"a", "b"},  # the spelling that lost BC-1's dependency
+        "names = ('a', 'b')\nfor name in names:\n    roi = session.get_roi(name)": {"a", "b"},
+        "A, B = 'a', 'b'\nx, y = session.get_roi(A), session.get_roi(B)": {"a", "b"},
+        "names = ['a', 'b']\nrois = {n: session.get_roi(n)\n        for n in names}": {"a", "b"},  # the element is written above its ``for``
+        "labels = {'a': 'DCIS', 'b': 'front'}\nfor n in labels:\n    r = session.get_roi(n)": {"a", "b"},
+        "r = session.roi_subsets['a']\nq = session.roi_manager.rois.get('b')": {"a", "b"},
+        "types = {'a': ['DCIS 1'], 'b': ['Invasive Tumor']}\nfor name, keep in types.items():\n    roi = session.get_roi(name)": {"a", "b"},  # BC-1's DE step
+        "names = ['a', 'b']\nprint(names.index('a'))\nfor i, name in enumerate(names):\n    roi = session.get_roi(name)": {"a", "b"},
+    }
+    for code, names in named.items():
+        acc = code_access(code)
+        assert acc.roi_names == names and not acc.roi_any, code
+    unknown = [
+        "for n in session.roi_subsets.keys():\n    r = session.get_roi(n)",  # the generator prompt's own idiom
+        "for n, r in session.roi_subsets.items():\n    print(r.n_obs)",
+        "def cells(name):\n    return session.get_roi(name).adata\nx = cells('a')",  # a parameter
+        "name = 'a'\nif flag:\n    name = 'b'\nr = session.get_roi(name)",  # bound twice
+        "names = ['a']\nnames.append('b')\nfor n in names:\n    r = session.get_roi(n)",  # changed in place
+        "r = session.get_roi(name)\nname = 'b'",  # bound below its use: the value comes from an earlier block
+        "for n in roi_names:\n    r = session.get_roi(n)",  # a list kept from an earlier block
+        "r = session.get_roi(f'region_{i}')",
+        "rois = session.roi_subsets\nr = rois[k]",
+        "for label, name in {'DCIS': 'a'}.items():\n    r = session.get_roi(name)",  # the values of a dict are not followed
+    ]
+    for code in unknown:
+        acc = code_access(code)
+        assert acc.roi_any and not acc.roi_names, code
+    for code in ("if 'a' in session.roi_subsets:\n    print(len(session.roi_subsets), sorted(session.roi_subsets))", "for i, box in enumerate(boxes):\n    session.create_roi(f'r{i}', slice_id=0, roi_definition=box)", "x = session.get_slice(0).adata.obs['celltype']"):
+        acc = code_access(code)
+        assert not acc.roi_any and not acc.roi_names, code  # asking for names, or making a region, reads none
+
+
+def test_a_region_kept_from_an_earlier_block_is_read_by_the_block_that_uses_it(rt):
+    rt.session.create_roi("tumor", 0, {"type": "bbox", "x_min": 0, "x_max": 50, "y_min": 0, "y_max": 50})
+    assert rt.run("roi = session.get_roi('tumor')").access.roi_names == {"tumor"}
+    later = rt.run("n = roi.adata.n_obs")  # no get_roi here: the object is in the namespace
+    assert later.success and later.access.roi_names == {"tumor"} and not later.access.roi_any
+    rebound = rt.run("roi = session.get_slice(0)\nn = roi.adata.n_obs")
+    assert rebound.success and not rebound.access.roi_names
+
+
+def test_a_data_object_carries_the_regions_it_was_computed_from(rt):
+    box = {"type": "bbox", "x_min": 0, "x_max": 50, "y_min": 0, "y_max": 50}
+    for name in ("duct", "front"):
+        rt.session.create_roi(name, 0, box)
+    built = rt.run("labels = ['Tumor', 'T cell']\nout_dir = 'out'\ncmp = session.get_roi('front').adata[:, :5].copy()\nn_front = cmp.n_obs")
+    assert built.success and built.access.roi_names == {"front"}
+    nxt = rt.run("import scanpy as sc\nmeans = cmp.X.mean(axis=0)")  # the next block goes on from cmp and never asks for the region
+    assert nxt.success and nxt.access.roi_names == {"front"} and not nxt.access.roi_any
+    third = rt.run("session.get_slice(0).adata.uns['front_means'] = means")  # and the one after it from means
+    assert third.success and third.access.roi_names == {"front"}
+    plain = rt.run("print(labels, out_dir, n_front)\nsession.get_slice(0).adata.uns['n'] = 1")
+    assert plain.success and not plain.access.roi_names  # labels, paths and numbers hand no region on
+    assert rt.run("cmp = session.get_slice(0).adata[:10].copy()").success  # rebuilt from the whole slice
+    assert not rt.run("m = cmp.X.sum()").access.roi_names
+    taken = code_access("x = x[:, :3]\ny = [v for v in x]\ndef f(cmp):\n    return cmp\nz = cmp").taken
+    assert {"x", "cmp"} <= taken and "v" not in taken  # ``x = x[...]`` goes on from the earlier x; a comprehension variable is its own
+
+
 def test_lock_blocks_gui_mutation_during_run(rt):
     from stat_agent.core import SessionBusy
 

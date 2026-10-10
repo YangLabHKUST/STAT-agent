@@ -133,7 +133,15 @@ and `fig:<id>`. Each executed step records the snapshot diff, the declared and t
 producer reference. A traced read counts only when its receiver can be a session slice
 (`session.get_slice(i).adata`, a name bound to one, a slice iterated from the session, a subset or
 copy of one, an aliased container such as `obs = adata.obs`); a read on an AnnData built by another
-call (`ad.concat`, `sc.read_h5ad`) or kept in the namespace as a non-slice object is not an input. Deleting or changing an input marks every
+call (`ad.concat`, `sc.read_h5ad`) or kept in the namespace as a non-slice object is not an input. A region
+is an input of a step whose code obtains it (`get_roi`, `get_roi_data`, a lookup in `session.roi_subsets`, a region
+object kept in the namespace): under its name when the scan can tell what the argument stands for (a literal, or a
+name the block binds exactly once to string literals, also as a loop variable); when it cannot, every region of the
+step's target slices counts, since a missed dependency would leave a result looking valid after its region was
+replaced. The blocks of one step are one program: what an earlier block read is an input of what a later block
+writes. Across steps and turns a data object kept in the namespace (an array, a table, an AnnData, a container of
+them) carries the regions it was computed from, and a block that goes on from it reads those regions. Deleting or
+changing an input marks every
 dependant stale; re-producing an artefact clears it. GUI edits go through `SessionMutator` and record the same way, so the canvas
 and the agent are two views of one state. The event `provenance_update` carries both the v1
 `state_changes` keys and the stale set.

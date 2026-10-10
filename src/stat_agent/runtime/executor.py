@@ -174,6 +174,18 @@ def value_rank(v: Any) -> int:
     return 1
 
 
+def _carries_data(v: Any) -> bool:
+    """Whether a namespace value holds data computed from the session (an array, a table, an AnnData, or a list,
+    tuple, set or dict of them), as opposed to a list of labels, a path, a number, a module or a function."""
+    try:
+        if hasattr(v, "shape") or hasattr(v, "columns"):
+            return True
+        held = v.values() if isinstance(v, dict) else v if isinstance(v, (list, tuple, set)) else ()
+        return any(hasattr(x, "shape") or hasattr(x, "columns") for x in list(held)[:50])
+    except Exception:  # noqa: BLE001  (an exotic object must never break a run)
+        return False
+
+
 def describe_value(v: Any) -> str:
     """One short line about a namespace value (type, shape, the keys a later step needs)."""
     try:
@@ -241,6 +253,7 @@ class Runtime:
         self.snapshot_enabled = snapshot
         self.workdir = Path(workdir) if workdir else getattr(session, "workdir", None)
         self.namespace: dict[str, Any] = {"session": session, "np": np, "pd": pd}
+        self._regions_of: dict[str, set[str]] = {}  # namespace variable -> the regions read by the blocks it was computed from
         self.orphaned: bool = False
         self._current: threading.Thread | None = None
         self._cancel = threading.Event()
@@ -254,6 +267,7 @@ class Runtime:
         import pandas as pd
 
         self.namespace = {"session": self.session, "np": np, "pd": pd}
+        self._regions_of = {}
 
     def user_variables(self) -> list[str]:
         """Names user code left in the namespace (oldest first): no seeds, no modules, no private names."""
@@ -274,6 +288,32 @@ class Runtime:
 
         slice_adatas = {id(s.adata) for s in self.session.slices.values()}
         return {n for n, v in self.namespace.items() if n not in SEEDED_NAMES and (isinstance(v, DataSlice) or id(v) in slice_adatas)}
+
+    def _roi_vars(self) -> dict[str, str]:
+        """Namespace variables holding a region (``roi = session.get_roi('tumor')`` kept from an earlier
+        block), with the region's name: a block that uses one reads that region without asking for it."""
+        from stat_agent.core.roi_manager import ROI
+
+        return {n: v.name for n, v in self.namespace.items() if n not in SEEDED_NAMES and isinstance(v, ROI)}
+
+    def _inherit_regions(self, access: CodeAccess) -> None:
+        """A block that goes on from a data object an earlier block left (``cmp_ad`` built from two regions, then
+        analysed in the next block, step or turn) reads the regions that object was computed from."""
+        for name in access.taken:
+            access.roi_names |= self._regions_of.get(name, set())
+
+    def _remember_regions(self, access: CodeAccess) -> None:
+        """After a successful block: the data objects it bound carry the regions it read (its own and the inherited
+        ones; every region of the session when it read one the scan could not name). Slices and region objects are
+        left out, their reads are seen directly; so are strings, numbers, modules and functions, which would hand a
+        region on to every block that reuses a path or a helper."""
+        regions = set(access.roi_names) | (set(self.session.roi_manager.rois) if access.roi_any else set())
+        direct = self._slice_names() | set(self._roi_vars())
+        for name in access.assigned & set(self.namespace):
+            if regions and name not in direct and _carries_data(self.namespace[name]):
+                self._regions_of[name] = regions
+            else:
+                self._regions_of.pop(name, None)
 
     def describe_namespace(self, limit: int = 40) -> list[tuple[str, str]]:
         """(name, description) for the user variables a later block is most likely to need; what the
@@ -326,7 +366,8 @@ class Runtime:
         run_id = uuid.uuid4().hex[:8]
         code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()[:16]
         result = RunResult(run_id=run_id, success=False, code=code, code_hash=code_hash)
-        result.access = code_access(code, self._derived_names(), self._slice_names())
+        result.access = code_access(code, self._derived_names(), self._slice_names(), self._roi_vars())
+        self._inherit_regions(result.access)
         if not code:
             result.error, result.error_type, result.refused = "Empty code provided", "EmptyCode", True
             return result
@@ -449,6 +490,7 @@ class Runtime:
                 if not k.startswith("__") and k not in SEEDED_NAMES:
                     self.namespace[k] = v
             result.namespace_added = sorted(set(self.namespace) - before_keys)
+            self._remember_regions(result.access)
         else:
             result.error = box.get("error", "unknown error")
             result.error_type = box.get("error_type", "Error")

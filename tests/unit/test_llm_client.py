@@ -18,7 +18,7 @@ from stat_agent.llm import (
     UsageMeter,
     extract_json,
 )
-from stat_agent.llm.client import content_text
+from stat_agent.llm.client import content_text, is_provider_exception
 from stat_agent.llm.structured import parse_json_to
 
 
@@ -66,6 +66,19 @@ def test_text_completion_records_usage(tmp_path):
     md = (tmp_path / "turn_t1.md").read_text()
     assert "## LLM Call 1: generator" in md and "### Full Prompt" in md and "### Response" in md
     assert list((tmp_path / "calls").glob("t1_01_generator.json"))
+
+
+def test_empty_text_reply_is_called_again_then_fails_as_a_provider_error():
+    """A reasoning model can return no text at all (a DeepSeek generator call did, after 21k tokens of reasoning, and
+    the step was taken as done with no code): the call is made again, and a model that keeps returning nothing fails
+    as a provider error, never as an answer."""
+    c = _client(["", "  \n", "hello"])
+    comp = asyncio.run(c.complete([("user", "u")], role="generator"))
+    assert comp.text == "hello" and comp.input_tokens == 30 and comp.output_tokens == 15
+    c2 = _client(["", "", ""])
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(c2.complete([("user", "u")], role="skill"))
+    assert is_provider_exception(exc.value)
 
 
 def test_structured_prompted_and_repair():

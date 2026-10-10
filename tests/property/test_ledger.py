@@ -21,11 +21,11 @@ settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "ci"))
 BBOX = {"type": "bbox", "x_min": 0, "x_max": 50, "y_min": 0, "y_max": 50}
 
 
-def _agent_step(session, ledger, fn, *, reads=(), roi_reads=(), produces_label="step", skill=None, targets=(0,)):
+def _agent_step(session, ledger, fn, *, reads=(), roi_reads=(), any_roi=False, produces_label="step", skill=None, targets=(0,)):
     before = take_snapshot(session)
     fn()
     after = take_snapshot(session)
-    return ledger.record_step(before, after, producer=StepRef(turn_id="t", step=1, skill=skill, label=produces_label), reads=reads, roi_reads=roi_reads, target_slice_ids=targets)
+    return ledger.record_step(before, after, producer=StepRef(turn_id="t", step=1, skill=skill, label=produces_label), reads=reads, roi_reads=roi_reads, any_roi=any_roi, target_slice_ids=targets)
 
 
 def test_load_then_derive_then_edit_marks_downstream_stale():
@@ -63,6 +63,21 @@ def test_roi_lifecycle_through_mutator_and_v1_summary():
     assert r3.delta.to_v1()["rois_deleted"] == ["tumor2"] and not led.live_rois()
     assert em.events[-1].type == "provenance_update" and em.events[-1].ledger_version == led.version
     assert led.version == len(led.log)
+
+
+def test_a_region_read_the_scan_cannot_name_takes_every_region_of_the_target_slices():
+    s = make_session("S3_two_slice_gene")
+    led = ProvenanceLedger()
+    led.initialize(take_snapshot(s))
+    m = SessionMutator(s, led, emitter=ListEmitter())
+    for name, sid in (("duct", 0), ("front", 0), ("other_slice", 1)):
+        m.create_roi(name, sid, BBOX)
+    _agent_step(s, led, lambda: s.get_slice(0).adata.uns.__setitem__("roi_stats", {"n": 1}), any_roi=True)
+    assert led.get("s0:uns:roi_stats").inputs == ["roi:duct", "roi:front"]  # slice 1's region is not the step's
+    _agent_step(s, led, lambda: s.get_slice(0).adata.uns.__setitem__("whole_slice", {"n": 1}))
+    assert led.get("s0:uns:whole_slice").inputs == []
+    gone = m.delete_roi("front")
+    assert gone.delta.entry.stale_now == ["s0:uns:roi_stats"] and led.is_stale("s0:uns:roi_stats") and not led.is_stale("s0:uns:whole_slice")
 
 
 def test_state_text_and_persistence(tmp_path):

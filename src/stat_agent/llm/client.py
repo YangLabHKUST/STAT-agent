@@ -80,6 +80,7 @@ def content_text(message: Any) -> str:
 
 PROVIDER_ERROR_NAMES = ("APIConnectionError", "OpenAIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError", "ServiceUnavailableError", "ConnectError", "ReadTimeout", "ConnectTimeout", "RemoteProtocolError", "ConnectionError", "TimeoutError", "IncompleteRead", "ChunkedEncodingError", "StreamChunkTimeoutError")
 PROVIDER_ERROR_TEXT = ("connection error", "connection reset", "connection aborted", "timed out", "temporarily unavailable", "overloaded", "rate limit", "bad gateway", "gateway time", "server error", "empty response", "eof occurred", "error code: 429", "error code: 5", "error code: 408", "no streaming chunk received")
+EMPTY_REPLY_RETRIES = 2
 
 
 def is_provider_error(message: str, code: str | None = None) -> bool:
@@ -291,10 +292,17 @@ class LLMClient:
         return Completion(text=text, value=value, mode="scripted", input_tokens=n_in, output_tokens=len(text) // 4)
 
     async def _call_text(self, lc_messages: list[Any]) -> Completion:
-        msg = await self.model.ainvoke(lc_messages)
-        text = content_text(msg)
-        i, o = usage_of(msg)
-        return Completion(text=text, value=text, mode="text", input_tokens=i, output_tokens=o, message=msg)
+        # A reasoning model can spend its whole output on reasoning and return no text; no role or skill can act on
+        # that, so the call is made again, and a model that keeps returning nothing fails as a provider error.
+        in_tok = out_tok = 0
+        for _ in range(1 + EMPTY_REPLY_RETRIES):
+            msg = await self.model.ainvoke(lc_messages)
+            text = content_text(msg)
+            i, o = usage_of(msg)
+            in_tok, out_tok = in_tok + i, out_tok + o
+            if text.strip():
+                return Completion(text=text, value=text, mode="text", input_tokens=in_tok, output_tokens=out_tok, message=msg)
+        raise RuntimeError(f"empty response: the model returned no text in {1 + EMPTY_REPLY_RETRIES} calls")
 
     async def _call_structured(self, lc_messages: list[Any], schema: type[T], mode: str, append_schema: bool) -> Completion:
         from langchain_core.messages import AIMessage, HumanMessage

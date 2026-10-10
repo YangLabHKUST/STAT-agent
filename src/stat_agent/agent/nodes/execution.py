@@ -251,6 +251,8 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     wrote_anything = False
     produced: list[str] = list(current.get("produced", []))
     reads: set[str] = set(current.get("reads", []))
+    roi_reads: set[str] = set(current.get("roi_reads") or [])  # with ``reads``: what the blocks of this step have read so far
+    any_roi = bool(current.get("any_roi"))
     figures: list[str] = list(current.get("figures", []))
     code_writes: set[str] = set(current.get("code_writes") or []) if continuing else set()  # unqualified kind:key refs the code wrote, on any object
     replaced_loaded: list[str] = list(current.get("replaced_loaded") or []) if continuing else []
@@ -291,14 +293,19 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
 
             step_writes = _code_writes(res)
             code_writes |= step_writes
+            if res.access:  # the blocks of a step are one program: what block 1 read is an input of what block 2 writes
+                reads |= set(res.access.reads)
+                roi_reads |= res.access.roi_names
+                any_roi = any_roi or res.access.roi_any
             # provenance for every run, successful or not (a failing run may still have mutated state)
             if ctx.ablation.provenance and res.snapshot_before is not None and res.snapshot_after is not None:
                 delta = ctx.ledger.record_step(
                     res.snapshot_before,
                     res.snapshot_after,
                     producer=StepRef(turn_id=state["turn_id"], step=step_no, skill=current.get("skill") or (contract.slug if contract else None), code_hash=res.code_hash, run_id=res.run_id, mode=current.get("mode", "guided")),
-                    reads=res.access.reads if res.access else (),
-                    roi_reads=res.access.roi_names if res.access else (),
+                    reads=reads,
+                    roi_reads=roi_reads,
+                    any_roi=any_roi,
                     declared_consumes=[a.id for a in contract.consumes] if contract else (),
                     writes=res.access.slice_writes if res.access else (),  # only a write on the slice itself may clear a stale flag; step_writes (any object) feeds the output check
                     target_slice_ids=current["target_slice_ids"],
@@ -312,8 +319,6 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
                     if new_replaced:
                         replaced_loaded += new_replaced
                         ctx.emit(WarningEvent(message="This step replaced data that came with the dataset: " + ", ".join(new_replaced) + ". The original values are no longer in memory; reload the dataset to get them back.", code="replaced_loaded"))
-                if res.access:
-                    reads |= {f"{r}" for r in res.access.reads}
             if step_writes and not ctx.ablation.provenance:
                 wrote_anything = True
 
@@ -394,7 +399,7 @@ async def execute_node(state: TurnState, runtime: LGRuntime[Context]):
     # the code wrote a declared output somewhere (a pooled or subset object, say): the step did its
     # work on a derived object and is accepted; only an inspection-only step gets a continuation
     declared_hit = bool(contract is not None and any(w.split(":", 1)[0] == a.kind and a.matches(w.split(":", 1)[1]) for a in contract.produces for w in code_writes if ":" in w))
-    current.update(results=results, produced=produced, reads=sorted(reads), figures=figures, code_writes=sorted(code_writes), replaced_loaded=replaced_loaded)
+    current.update(results=results, produced=produced, reads=sorted(reads), roi_reads=sorted(roi_reads), any_roi=any_roi, figures=figures, code_writes=sorted(code_writes), replaced_loaded=replaced_loaded)
     if missing and not continuing and not wrote_anything and not declared_hit and not cancelled(ctx):
         # the code ran but wrote nothing (an inspection-only step): one continuation on the live
         # namespace, never a re-run of what already succeeded

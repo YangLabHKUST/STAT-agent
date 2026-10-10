@@ -15,6 +15,9 @@ class CodeAccess:
     writes: set[str] = field(default_factory=set)  # assigned on any object
     slice_writes: set[str] = field(default_factory=set)  # assigned (or produced by a known library call) on a slice itself
     roi_names: set[str] = field(default_factory=set)
+    roi_any: bool = False  # a region read the scan could not name: every region of the target slices counts
+    taken: set[str] = field(default_factory=set)  # names used with the value an earlier block left in the namespace
+    assigned: set[str] = field(default_factory=set)  # names the block binds as variables
     slice_ids: set[int] = field(default_factory=set)
     calls: set[str] = field(default_factory=set)
     imports: set[str] = field(default_factory=set)
@@ -28,6 +31,7 @@ class CodeAccess:
             "writes": sorted(self.writes),
             "slice_writes": sorted(self.slice_writes),
             "roi_names": sorted(self.roi_names),
+            "roi_any": self.roi_any,
             "slice_ids": sorted(self.slice_ids),
             "imports": sorted(self.imports),
             "dynamic_keys": self.dynamic_keys,
@@ -56,18 +60,20 @@ class _SliceAndPathScan(ast.NodeVisitor):
             self.paths.append(node.value)
 
 
-def code_access(code: str, derived_names: Iterable[str] = (), slice_names: Iterable[str] = ()) -> CodeAccess:
+def code_access(code: str, derived_names: Iterable[str] = (), slice_names: Iterable[str] = (), roi_vars: dict[str, str] | None = None) -> CodeAccess:
     """Static access scan of one block. ``derived_names`` are namespace variables known to hold an
     AnnData that is not a session slice (reads on them are not slice reads); ``slice_names`` are
-    variables known to hold a session slice or its AnnData (writes on them are slice writes). See
-    ``_BodyScan``."""
+    variables known to hold a session slice or its AnnData (writes on them are slice writes);
+    ``roi_vars`` maps the variables known to hold a region to that region's name (a use of one is a
+    read of that region). See ``_BodyScan``."""
     acc = CodeAccess()
     try:
-        scan = scan_code(code, derived_names, slice_names)
+        scan = scan_code(code, derived_names, slice_names, roi_vars)
     except SyntaxError as exc:
         acc.parse_error = f"{exc.msg} (line {exc.lineno})"
         return acc
-    acc.reads, acc.writes, acc.roi_names = set(scan.reads), set(scan.writes), set(scan.roi_names)
+    acc.reads, acc.writes, acc.roi_names, acc.roi_any = set(scan.reads), set(scan.writes), set(scan.roi_names), scan.roi_any
+    acc.taken, acc.assigned = set(scan.taken), set(scan.strings.assigned)
     acc.slice_writes = set(scan.slice_writes)
     acc.calls, acc.imports, acc.dynamic_keys = set(scan.calls), set(scan.imports), len(scan.dynamic_keys)
     extra = _SliceAndPathScan()

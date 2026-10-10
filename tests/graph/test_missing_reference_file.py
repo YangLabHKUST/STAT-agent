@@ -130,6 +130,9 @@ def test_file_prerequisite_helpers():
     assert required_file_prerequisites(meta(["Annotated reference scRNA-seq dataset path (.h5ad file)", "Cell type column name"])) == ["Annotated reference scRNA-seq dataset path (.h5ad file)"]
     assert required_file_prerequisites(meta(["Optional: path to a reference scRNA-seq h5ad file with celltype annotations"])) == []
     assert required_file_prerequisites(meta(["Tissue type information (e.g., breast cancer)"])) == []
+    # a public annotation the code can fetch is not a file the session must hold (R2.9 U1: inferCNV gene positions)
+    assert required_file_prerequisites(meta(["gene positions in adata.var, or an external Ensembl GTF/gene-order file"])) == []
+    assert required_file_prerequisites(meta(["MSigDB Hallmark gene sets (GMT file path)"])) == []
     assert file_in_session(SessionSummary(extra_files=["ref/r.h5ad"]), [])
     assert not file_in_session(SessionSummary(), ["use ./reference_mouse_brain_that_does_not_exist.h5ad"])
 

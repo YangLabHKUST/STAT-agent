@@ -57,7 +57,9 @@ class Verdict(BaseModel):
 # count layers that only an upstream quantifier can create; any other absent input of a provisional
 # card is left to the LLM verifier (raw counts usually live in adata.X, not in a layer)
 QUANTIFICATION_LAYERS = {"spliced", "unspliced", "ambiguous"}
-FILE_WORDS = re.compile(r"\.h5ad\b|\b(?:path|file)\b", re.I)
+# a reference dataset; a public annotation (gene positions, gene sets) is left to the LLM verifier, which can
+# accept a source the user names, such as Ensembl
+FILE_WORDS = re.compile(r"\bh5ad\b", re.I)
 H5AD_TOKEN = re.compile(r"[\w./~-]+\.h5ad\b")
 
 

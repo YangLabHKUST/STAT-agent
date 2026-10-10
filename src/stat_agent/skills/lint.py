@@ -138,6 +138,136 @@ def _dotted(node: ast.AST) -> Optional[str]:
     return None
 
 
+ROI_GETTERS = {"get_roi", "get_roi_data"}  # their first argument (or roi_name=) names the region whose cells the code reaches
+ROI_STORES = {"roi_subsets", "rois"}  # session.roi_subsets, session.roi_manager.rois: name -> region, for every region
+NAMES_ONLY = {"len", "list", "sorted", "set", "tuple", "print", "str", "repr"}  # of a region store: its names, no region
+GROWS = {"append", "extend", "insert", "add", "update", "setdefault", "symmetric_difference_update", "__setitem__", "__iadd__"}  # can put a new string into a list, set or dict
+
+
+class _StringNames:
+    """What the names of one block stand for, where that can only be string literals.
+
+    ``strings(node)`` gives the strings an expression can be (a literal, or a name such as ``name = 'tumor'`` or the
+    variable of a loop or comprehension over a list of them, also as ``for name, v in d.items()`` and ``for i, name
+    in enumerate(names)``); ``items(node)`` the strings that a list, tuple, set or dict (its keys) holds, written
+    out or under a name. A name counts only when the block binds it exactly once, above the place that uses it, and
+    never adds to it in place (no second assignment, no ``+=``, no ``names.append(...)``, no ``names[0] = ...``, not
+    a parameter, an import or a ``with`` target), so the answer does not depend on the order the code runs in.
+    Everything else is None: unknown, never guessed."""
+
+    def __init__(self, tree: Optional[ast.AST] = None) -> None:
+        self.first_bound: Dict[str, int] = {}  # every name the block binds itself -> the first line that does (parameters and comprehension variables are local and not listed)
+        self.assigned: Set[str] = set()  # the names among them bound as variables (not imports, functions, classes)
+        self._one: Dict[str, Tuple[int, Set[str]]] = {}  # name -> (line bound, the strings it can be)
+        self._many: Dict[str, Tuple[int, Set[str]]] = {}  # name -> (line bound, the strings it holds)
+        if tree is None:
+            return
+        sites: Dict[str, List[Optional[Tuple[str, ast.AST, int]]]] = {}  # None: a site that is not understood
+        understood: Set[int] = set()
+
+        def note(name: str, line: int) -> None:
+            self.first_bound[name] = min(self.first_bound.get(name, line), line)
+
+        def bind(target: ast.AST, how: str, source: ast.AST, line: int) -> None:
+            if isinstance(target, ast.Name):
+                sites.setdefault(target.id, []).append((how, source, line))
+                understood.add(id(target))
+            elif how == "value" and isinstance(target, (ast.Tuple, ast.List)) and isinstance(source, (ast.Tuple, ast.List)) and len(target.elts) == len(source.elts):
+                for t, v in zip(target.elts, source.elts):  # a, b = 'x', 'y'
+                    bind(t, how, v, line)
+
+        def bind_item(target: ast.AST, source: ast.AST, line: int) -> None:
+            if isinstance(target, ast.Tuple) and len(target.elts) == 2 and isinstance(source, ast.Call) and not source.keywords:
+                f = source.func
+                if isinstance(f, ast.Attribute) and f.attr == "items" and not source.args:
+                    target, source = target.elts[0], f.value  # for name, v in d.items()
+                elif isinstance(f, ast.Name) and f.id == "enumerate" and len(source.args) == 1:
+                    target, source = target.elts[1], source.args[0]  # for i, name in enumerate(names)
+            bind(target, "item", source, line)
+
+        nodes = list(ast.walk(tree))
+        for node in nodes:
+            if isinstance(node, ast.Assign):
+                for t in node.targets:
+                    bind(t, "value", node.value, node.lineno)
+            elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)) and node.value is not None:
+                bind(node.target, "value", node.value, node.lineno)
+            elif isinstance(node, (ast.For, ast.AsyncFor)):
+                bind_item(node.target, node.iter, node.lineno)
+            elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+                for gen in node.generators:  # bound where the comprehension starts: its element may be written above its ``for``
+                    bind_item(gen.target, gen.iter, node.lineno)
+        in_place: Set[str] = set()
+        local = {id(n) for c in nodes if isinstance(c, ast.comprehension) for n in ast.walk(c.target)}
+        for node in nodes:
+            if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+                if id(node) not in local:
+                    note(node.id, node.lineno)
+                    self.assigned.add(node.id)
+                if id(node) not in understood:
+                    sites.setdefault(node.id, []).append(None)  # +=, del, with ... as, an element of an unmatched tuple
+            elif isinstance(node, (ast.Subscript, ast.Attribute)) and not isinstance(node.ctx, ast.Load):
+                base = node.value
+                while isinstance(base, (ast.Subscript, ast.Attribute)):
+                    base = base.value
+                if isinstance(base, ast.Name):
+                    in_place.add(base.id)  # names[0] = ...
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name) and node.func.attr in GROWS:
+                in_place.add(node.func.value.id)  # names.append(...)
+            else:
+                if isinstance(node, ast.arg):
+                    sites.setdefault(node.arg, []).append(None)
+                    continue
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    other, line = [node.name], node.lineno
+                elif isinstance(node, ast.alias):
+                    other, line = [(node.asname or node.name).split(".")[0]], getattr(node, "lineno", 0)
+                elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                    other, line = node.names, node.lineno
+                elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+                    other, line = [node.name], node.lineno
+                elif isinstance(node, ast.MatchMapping) and node.rest:
+                    other, line = [node.rest], node.lineno
+                else:
+                    continue
+                for n in other:
+                    sites.setdefault(n, []).append(None)
+                    note(n, line)
+        single = {n: s[0] for n, s in sites.items() if len(s) == 1 and s[0] is not None and n not in in_place}
+        while True:  # a loop variable resolves once the list it runs over has
+            known = len(self._one) + len(self._many)
+            for name, (how, source, line) in single.items():
+                if name in self._one or name in self._many:
+                    continue
+                if how == "item":
+                    if got := self.items(source):
+                        self._one[name] = (line, got)
+                elif got := self.strings(source):
+                    self._one[name] = (line, got)
+                elif got := self.items(source):
+                    self._many[name] = (line, got)
+            if len(self._one) + len(self._many) == known:
+                break
+
+    @staticmethod
+    def _at(table: Dict[str, Tuple[int, Set[str]]], node: ast.Name) -> Optional[Set[str]]:
+        line, got = table.get(node.id, (0, None))
+        return got if got and line <= node.lineno else None
+
+    def strings(self, node: Optional[ast.AST]) -> Optional[Set[str]]:
+        if isinstance(node, ast.Constant):
+            return {node.value} if isinstance(node.value, str) else None
+        return self._at(self._one, node) if isinstance(node, ast.Name) else None
+
+    def items(self, node: Optional[ast.AST]) -> Optional[Set[str]]:
+        if isinstance(node, ast.Name):
+            return self._at(self._many, node)
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set, ast.Dict)):
+            parts = [self.strings(e) for e in (node.keys if isinstance(node, ast.Dict) else node.elts)]
+            return set().union(*parts) if parts and all(parts) else None
+        return None
+
+
 class _BodyScan(ast.NodeVisitor):
     """Collect artefact writes/reads, ROI names, calls and imports from one code block.
 
@@ -152,9 +282,19 @@ class _BodyScan(ast.NodeVisitor):
     what changed and the output check uses it), ``slice_writes`` holds only the assignments and the
     known library effects whose receiver is a session slice itself, not a subset or a copy, because
     the ledger clears a stale flag on a key the code re-wrote only when the slice's own value was
-    recomputed."""
+    recomputed.
 
-    def __init__(self, derived_names: Iterable[str] = (), slice_names: Iterable[str] = ()) -> None:
+    A region is read when the code obtains the region object: ``get_roi``/``get_roi_data``, or a lookup in the
+    region store (``session.roi_subsets[...]``, ``.get(...)``). Its name goes to ``roi_names`` when the scan can
+    tell what the argument stands for (``_StringNames``), and a region object kept in the namespace from an earlier
+    block counts under its own name (``roi_vars``); ``taken`` lists the names the block uses with the value an
+    earlier block left, so that the runtime can add the regions those values were computed from. When the scan cannot tell (a computed name, a parameter, a name
+    kept from an earlier block, the store handed on whole), ``roi_any`` is set and the ledger takes every region of
+    the step's target slices as an input: a dependency recorded once too often costs a recomputation, one that is
+    missed leaves a result looking valid after its region was replaced. Asking the store for its names (``in``,
+    ``.keys()``, ``len``, a loop over it) reads no region."""
+
+    def __init__(self, derived_names: Iterable[str] = (), slice_names: Iterable[str] = (), roi_vars: Optional[Dict[str, str]] = None) -> None:
         self.writes: Set[str] = set()
         self.slice_writes: Set[str] = set()  # the writes (plus library effects) whose receiver is a slice itself
         self.reads: Set[str] = set()
@@ -162,6 +302,12 @@ class _BodyScan(ast.NodeVisitor):
         self.calls: Set[str] = set()
         self.imports: Set[str] = set()
         self.roi_names: Set[str] = set()
+        self.roi_any = False  # a region was read under a name the scan cannot tell
+        self.roi_vars: Dict[str, str] = dict(roi_vars or {})  # namespace variable -> name of the region it holds
+        self.taken: Set[str] = set()  # names used with the value an earlier block left in the namespace
+        self._locals: List[Set[str]] = []  # parameters and comprehension variables of the scopes being visited
+        self.strings = _StringNames()  # set by scan_code from the whole block
+        self._store_uses: Set[int] = set()  # region-store mentions already accounted for
         self.slice_names: Set[str] = set(slice_names)  # names bound to a session slice or its AnnData
         self.copy_names: Set[str] = set()  # slice names holding a subset or a copy: reads count, writes stay on the copy
         self.derived_names: Set[str] = set(derived_names)
@@ -285,17 +431,17 @@ class _BodyScan(ast.NodeVisitor):
         # inside it. Read attribution is untouched (reads on unknown names count anyway).
         saved = (set(self.slice_names), set(self.copy_names), set(self.direct_containers))
         a = node.args
-        for p in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg]:
-            if p is not None:
-                self.slice_names.discard(p.arg)
-                self.copy_names.discard(p.arg)
-                self.direct_containers.discard(p.arg)
-        self.generic_visit(node)
+        params = {p.arg for p in [*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg] if p is not None}
+        self.slice_names -= params
+        self.copy_names -= params
+        self.direct_containers -= params
+        self._scoped(node, params)
         self.slice_names, self.copy_names, self.direct_containers = saved
 
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_For(self, node: ast.For) -> None:
+        self._names_only(node.iter)
         self._bind(node.target, self._classify(node.iter))
         if self._direct_slice(node.iter):  # for s in session.iter_slices(); for sid, s in session.slices.items()
             for n in ast.walk(node.target):
@@ -319,6 +465,9 @@ class _BodyScan(ast.NodeVisitor):
                     self.slice_writes.add(f"{kind}:{key}")
 
     def visit_Subscript(self, node: ast.Subscript) -> None:
+        if self._is_store(node.value) and isinstance(node.ctx, ast.Load):  # session.roi_subsets['tumor']
+            self._store_uses.add(id(node.value))
+            self._roi_read(node.slice)
         art = self._artifact(node)
         if art and isinstance(node.ctx, ast.Load):
             kind, key = art
@@ -329,6 +478,9 @@ class _BodyScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Compare(self, node: ast.Compare) -> None:
+        for op, comp in zip(node.ops, node.comparators):
+            if isinstance(op, (ast.In, ast.NotIn)):
+                self._names_only(comp)  # 'tumor' in session.roi_subsets
         # 'celltype' in adata.obs.columns / in adata.obsm / in adata.uns
         if isinstance(node.left, ast.Constant) and isinstance(node.left.value, str) and node.ops:
             if isinstance(node.ops[0], (ast.In, ast.NotIn)) and node.comparators:
@@ -350,18 +502,73 @@ class _BodyScan(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        leaf = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+        first = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg in ("roi_name", "name")), None)
+        if leaf in ROI_GETTERS:
+            self._roi_read(first)
+        elif leaf == "create_roi":  # makes a region; reads none
+            self.roi_names |= self.strings.strings(first) or set()
+        elif leaf == "get_rois_for_slice":
+            self.roi_any = True
+        elif isinstance(func, ast.Attribute) and self._is_store(func.value) and leaf in ("get", "keys"):
+            self._store_uses.add(id(func.value))
+            if leaf == "get":  # session.roi_subsets.get('tumor')
+                self._roi_read(first)
+        elif leaf in NAMES_ONLY and len(node.args) == 1:
+            self._names_only(node.args[0])
         name = _dotted(node.func)
         if name:
             self.calls.add(name)
-            if name.endswith("get_roi") or name.endswith("create_roi"):
-                if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-                    self.roi_names.add(node.args[0].value)
             effects = LIBRARY_EFFECTS.get(name, [])
             if effects:  # sc.tl.leiden(x) writes obs:leiden on the object it is given
                 target = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "adata"), None)
                 if target is not None and self._direct_slice(target):
                     self.slice_writes.update(e for e in effects if "*" not in e)
         self.generic_visit(node)
+
+    @staticmethod
+    def _is_store(node: ast.AST) -> bool:
+        return isinstance(node, ast.Attribute) and node.attr in ROI_STORES
+
+    def _names_only(self, node: ast.AST) -> None:
+        if self._is_store(node):
+            self._store_uses.add(id(node))
+
+    def _roi_read(self, arg: Optional[ast.AST]) -> None:
+        names = self.strings.strings(arg)
+        if names:
+            self.roi_names |= names
+        else:
+            self.roi_any = True
+
+    def visit_comprehension(self, node: ast.comprehension) -> None:
+        self._names_only(node.iter)
+        self.generic_visit(node)
+
+    def _scoped(self, node: ast.AST, names: Set[str]) -> None:
+        self._locals.append(names)
+        self.generic_visit(node)
+        self._locals.pop()
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._scoped(node, {a.arg for a in ast.walk(node.args) if isinstance(a, ast.arg)})
+
+    def visit_ListComp(self, node: ast.AST) -> None:
+        self._scoped(node, {n.id for g in node.generators for n in ast.walk(g.target) if isinstance(n, ast.Name)})
+
+    visit_SetComp = visit_DictComp = visit_GeneratorExp = visit_ListComp
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in ROI_STORES and id(node) not in self._store_uses:
+            self.roi_any = True  # the store handed on whole: its regions iterated, aliased, passed to a call
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, ast.Load) and not any(node.id in names for names in self._locals) and node.lineno <= self.strings.first_bound.get(node.id, node.lineno):
+            self.taken.add(node.id)  # not bound by this block before this line (``x = x[mask]`` still takes the earlier x)
+            if node.id in self.roi_vars:
+                self.roi_names.add(self.roi_vars[node.id])  # a region kept from an earlier block
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
@@ -372,9 +579,11 @@ class _BodyScan(ast.NodeVisitor):
             self.imports.add(node.module.split(".")[0])
 
 
-def scan_code(code: str, derived_names: Iterable[str] = (), slice_names: Iterable[str] = ()) -> _BodyScan:
-    scan = _BodyScan(derived_names, slice_names)
-    scan.visit(ast.parse(code))
+def scan_code(code: str, derived_names: Iterable[str] = (), slice_names: Iterable[str] = (), roi_vars: Optional[Dict[str, str]] = None) -> _BodyScan:
+    tree = ast.parse(code)
+    scan = _BodyScan(derived_names, slice_names, roi_vars)
+    scan.strings = _StringNames(tree)
+    scan.visit(tree)
     return scan
 
 

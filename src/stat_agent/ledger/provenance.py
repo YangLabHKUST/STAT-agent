@@ -233,6 +233,7 @@ class ProvenanceLedger:
         producer: StepRef,
         reads: Iterable[str] = (),
         roi_reads: Iterable[str] = (),
+        any_roi: bool = False,
         declared_consumes: Iterable[str] = (),
         writes: Iterable[str] = (),
         target_slice_ids: Iterable[int] = (),
@@ -240,8 +241,10 @@ class ProvenanceLedger:
         outcome: str = "ok",
     ) -> LedgerDelta:
         """Record an agent run. ``reads`` are unqualified ``kind:key`` refs from the code
-        scan (qualified per target slice); ``roi_reads`` are ROI names; ``declared_consumes``
-        are unqualified refs from the skill contract; ``writes`` are unqualified refs the code
+        scan (qualified per target slice); ``roi_reads`` are ROI names, and ``any_roi`` says the code
+        read a region the scan could not name, so every region of the target slices is an input (one
+        dependency too many costs a recomputation, one too few leaves a stale result looking valid);
+        ``declared_consumes`` are unqualified refs from the skill contract; ``writes`` are unqualified refs the code
         assigned on the slice itself (a write on a copy, a subset or a pooled object must not be
         passed: it would clear a stale flag the slice still deserves). Only the snapshot diff
         decides what changed. A key the code assigned whose values
@@ -265,6 +268,8 @@ class ProvenanceLedger:
                     candidates.add(qid)
         for name in roi_reads:
             candidates.add(f"roi:{name}")
+        if any_roi:
+            candidates.update(aid for aid, fp in before.artifacts.items() if fp.kind == "roi" and fp.slice_id in targets)
 
         def inputs_for(aid: str) -> list[str]:
             return sorted(c for c in candidates if c != aid and c in before.artifacts and c not in diff.touched)
