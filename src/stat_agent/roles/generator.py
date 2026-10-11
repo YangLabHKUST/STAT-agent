@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 _INTERPRET_RE = re.compile(r"__INTERPRET__:\s*(.+?)(?:\n|$)")
 _CODE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+.-]*)[ \t]*\n(.*?)```", re.S)
+_OPEN_FENCE_RE = re.compile(r"```[ \t]*([A-Za-z0-9_+.-]*)[ \t]*\n(.*)", re.S)
 _PYTHON_TAGS = {"python", "py", "python3", "ipython"}
 
 
@@ -89,7 +90,17 @@ def parse_segments(response: str) -> Generation:
             segments.append(Segment(kind="text", content=text))
         segments.append(Segment(kind="code", content=code))
         last = cm.end()
-    tail = response[last:].strip()
+    tail = response[last:]
+    # a last fence the model never closed (it went straight on to __INTERPRET__, or stopped) still holds a block
+    fences = [m.start() for m in re.finditer("```", tail)]
+    om = _OPEN_FENCE_RE.match(tail, fences[-1]) if len(fences) % 2 else None
+    if om and _is_python_block(om.group(1), om.group(2).strip()):
+        text = tail[: om.start()].strip()
+        if text:
+            segments.append(Segment(kind="text", content=text))
+        segments.append(Segment(kind="code", content=om.group(2).strip()))
+        tail = ""
+    tail = tail.strip()
     if tail:
         segments.append(Segment(kind="text", content=tail))
     return Generation(segments=segments, interpret_instruction=interpret, raw=response)

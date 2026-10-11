@@ -2313,8 +2313,17 @@
 
   function renderMarkdown(text) {
     if (!text) return '';
+    // a fence the model never closed runs to the end of the text, as in CommonMark
+    if ((text.match(/```/g) || []).length % 2) text += '\n```';
+    // fences first, so code is never read as markdown (a "# comment" is not a heading, "a * b" not emphasis)
+    return text.split(/(```\w*\n[\s\S]*?```)/g).map(part => {
+      const fence = part.match(/^```\w*\n([\s\S]*?)```$/);
+      return fence ? `<div class="chat-code-block"><pre>${escapeHtml(fence[1])}</pre></div>` : renderChatProse(part);
+    }).join('');
+  }
+
+  function renderChatProse(text) {
     let html = escapeHtml(text);
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<div class="chat-code-block"><pre>$2</pre></div>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/(^|\n)######\s+(.+)/g, '$1<h6 class="chat-heading">$2</h6>');
     html = html.replace(/(^|\n)#####\s+(.+)/g, '$1<h5 class="chat-heading">$2</h5>');

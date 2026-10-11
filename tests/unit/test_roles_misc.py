@@ -22,6 +22,17 @@ def test_untagged_python_fence_runs_and_other_fences_stay_prose():
     assert [k for k, _ in kinds("```json\n{\"a\": 1}\n```")] == ["text"]
 
 
+def test_a_last_fence_left_open_still_runs():
+    """DeepSeek ended a step with its last block and __INTERPRET__ but no closing fence (single-query Q35, Run 4):
+    the block was shown as prose and never ran."""
+    gen = parse_segments("Finally I'll map it.\n\n```python\nimport numpy as np\nprint(np.pi)\n\n__INTERPRET__: check the factors\n")
+    assert [(s.kind, s.content) for s in gen.segments] == [("text", "Finally I'll map it."), ("code", "import numpy as np\nprint(np.pi)")]
+    assert gen.interpret_instruction == "check the factors"
+    kinds = lambda text: [s.kind for s in parse_segments(text).segments]  # noqa: E731
+    assert kinds("```python\nx = 1\n```\nthen\n```python\ny = 2") == ["code", "text", "code"]
+    assert kinds("Run:\n```bash\nls -la") == ["text"]  # an open shell fence stays prose
+
+
 def test_assemble_context_keeps_head_and_tail_of_long_output():
     out = "\n".join(f"line {i}" for i in range(2000))
     ctx = assemble_context([Segment(kind="code", content="print(1)")], [BlockResult(code="print(1)", stdout=out)], max_output=300, tail=100)
