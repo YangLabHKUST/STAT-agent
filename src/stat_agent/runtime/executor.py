@@ -157,6 +157,8 @@ class RuntimeBusy(RuntimeError):
 
 SEEDED_NAMES = ("session", "np", "pd")
 KEEP_RECENT = 5  # newest variables always listed, whatever they hold
+MAX_ERROR_CHARS = 3000  # an exception message (and each traceback line) longer than this is cut in the middle
+MAX_TRACEBACK_CHARS = 12000
 
 
 def value_rank(v: Any) -> int:
@@ -445,7 +447,7 @@ class Runtime:
                     box["error_type"], box["error"] = "Cancelled", "execution stopped by the user"
                 else:
                     box["error_type"] = type(exc).__name__
-                    box["error"] = f"{type(exc).__name__}: {exc}"
+                    box["error"] = clip_middle(f"{type(exc).__name__}: {exc}")
                 box["traceback"] = _trim_traceback(traceback.format_exc(), result.run_id)
                 close_all_figures()
             finally:
@@ -504,14 +506,26 @@ class Runtime:
         return result
 
 
+def clip_middle(text: str, limit: int = MAX_ERROR_CHARS) -> str:
+    """``text`` cut to ``limit`` characters and a marker, keeping its start and its end. Some exceptions quote a whole
+    array (matplotlib names every value of a bad ``c=``: megabytes for a slice), and the message goes to
+    the chat, the logs and the reflector's prompt."""
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3
+    return f"{text[:head]} ... [{len(text) - limit:,} characters omitted] ... {text[head - limit:]}"
+
+
 def _trim_traceback(tb: str, run_id: str) -> str:
-    """Keep the frames from the generated code onward (drop runtime internals)."""
+    """Keep the frames from the generated code onward (drop runtime internals), with long lines (the
+    message, repeated for every chained exception) and the whole cut like the message."""
     marker = f'<stat-run-{run_id}>'
-    lines = tb.splitlines()
+    lines = [clip_middle(ln) for ln in tb.splitlines()]
     for i, ln in enumerate(lines):
         if marker in ln:
-            return "\n".join(["Traceback (most recent call last):"] + lines[i:])
-    return tb
+            lines = ["Traceback (most recent call last):"] + lines[i:]
+            break
+    return clip_middle("\n".join(lines), MAX_TRACEBACK_CHARS)
 
 
 def _async_raise(tid: int | None, exc_type) -> None:

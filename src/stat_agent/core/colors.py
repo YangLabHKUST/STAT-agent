@@ -3,6 +3,10 @@
 Colours are generated deterministically from the set of names (seeded by a hash of
 the sorted names) so that regenerating colours for the same cell types yields the
 same palette; pre-existing colours (scanpy list format or dict format) are kept.
+
+Colours are stored as '#rrggbb': generated code plots with the palette it finds in
+``adata.uns['celltype_colors']``, and hex is the notation matplotlib, seaborn and the
+browser all read (matplotlib rejects CSS 'rgb(r, g, b)', which STAT stored before).
 """
 
 from __future__ import annotations
@@ -37,35 +41,40 @@ def hsl_to_rgb(h: float, s: float, lightness: float) -> tuple[float, float, floa
     return hue2rgb(p, q, h + 1 / 3), hue2rgb(p, q, h), hue2rgb(p, q, h - 1 / 3)
 
 
-def rgb_string(r: float, g: float, b: float) -> str:
-    return f"rgb({int(r * 255)}, {int(g * 255)}, {int(b * 255)})"
+def hex_string(r: float, g: float, b: float) -> str:
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
 
 
-def normalize_color_to_rgb(color: object) -> str | None:
-    """Convert a colour (hex, named, rgb(...)) to the canonical 'rgb(r, g, b)' string."""
+def normalize_color(color: object) -> str | None:
+    """Convert a colour (hex, named, CSS rgb(...)) to the canonical '#rrggbb' string."""
     if not isinstance(color, str):
         return None
     color = color.strip()
-    if color.startswith("rgb("):
-        return color
-    if color.startswith("#"):
-        hex_str = color[1:]
-        if len(hex_str) == 3:
-            hex_str = "".join(c * 2 for c in hex_str)
-        if len(hex_str) == 6:
-            try:
-                r, g, b = (int(hex_str[i : i + 2], 16) for i in (0, 2, 4))
-            except ValueError:
-                return None
-            return f"rgb({r}, {g}, {b})"
-        return None
+    if color.startswith(("rgb(", "rgba(")) and color.endswith(")"):
+        try:
+            channels = [float(v) for v in color[color.index("(") + 1 : -1].split(",")[:3]]
+        except ValueError:
+            return None
+        if len(channels) != 3 or not all(0 <= v <= 255 for v in channels):
+            return None
+        return "#" + "".join(f"{int(v):02x}" for v in channels)
     try:
-        from matplotlib.colors import to_rgb
+        from matplotlib.colors import to_hex
 
-        r, g, b = to_rgb(color)
-        return rgb_string(r, g, b)
+        return to_hex(color)
     except (ImportError, ValueError):
         return None
+
+
+def normalize_palette(colors: dict | None) -> dict[str, str]:
+    """``{name: colour}`` with every colour as '#rrggbb'; a colour that cannot be read is dropped (it is
+    generated again where it is needed)."""
+    out = {}
+    for name, color in (colors or {}).items():
+        hex_color = normalize_color(color)
+        if hex_color:
+            out[str(name)] = hex_color
+    return out
 
 
 def stable_seed(names: Iterable[str]) -> int:
@@ -87,9 +96,9 @@ def generate_distinct_colors(
     colors: dict[str, str] = {}
     for name in names:
         if existing and name in existing:
-            rgb = normalize_color_to_rgb(existing[name])
-            if rgb:
-                colors[name] = rgb
+            hex_color = normalize_color(existing[name])
+            if hex_color:
+                colors[name] = hex_color
     missing = [n for n in names if n not in colors]
     if not missing:
         return colors
@@ -99,7 +108,7 @@ def generate_distinct_colors(
         hue = (hue + GOLDEN_RATIO) % 1.0
         saturation = 0.6 + rng.random() * 0.2
         lightness = 0.45 + rng.random() * 0.15
-        colors[name] = rgb_string(*hsl_to_rgb(hue, saturation, lightness))
+        colors[name] = hex_string(*hsl_to_rgb(hue, saturation, lightness))
     return colors
 
 
@@ -109,12 +118,7 @@ def extract_existing_colors(adata) -> dict[str, str]:
         return {}
     raw = adata.uns["celltype_colors"]
     if isinstance(raw, dict):
-        out = {}
-        for ct, color in raw.items():
-            rgb = normalize_color_to_rgb(color)
-            if rgb:
-                out[str(ct)] = rgb
-        return out
+        return normalize_palette(raw)
     if hasattr(raw, "__len__") and not isinstance(raw, str):
         color_list = list(raw)
         col = adata.obs.get("celltype")
@@ -127,9 +131,9 @@ def extract_existing_colors(adata) -> dict[str, str]:
         out = {}
         for i, cat in enumerate(categories):
             if i < len(color_list):
-                rgb = normalize_color_to_rgb(str(color_list[i]))
-                if rgb:
-                    out[str(cat)] = rgb
+                hex_color = normalize_color(str(color_list[i]))
+                if hex_color:
+                    out[str(cat)] = hex_color
         return out
     return {}
 
@@ -137,8 +141,9 @@ def extract_existing_colors(adata) -> dict[str, str]:
 __all__ = [
     "GOLDEN_RATIO",
     "hsl_to_rgb",
-    "rgb_string",
-    "normalize_color_to_rgb",
+    "hex_string",
+    "normalize_color",
+    "normalize_palette",
     "stable_seed",
     "generate_distinct_colors",
     "extract_existing_colors",

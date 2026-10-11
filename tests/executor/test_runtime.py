@@ -41,6 +41,15 @@ def test_stdout_tail_available_after_failure(rt):
     assert "before crash" in r.stdout_tail and r.error_type == "ValueError"
 
 
+def test_a_huge_error_message_is_cut(rt):
+    """matplotlib names every value of a bad c= argument: 3.4 MB for a slice of the demo, which went whole to the
+    chat and into the reflector's prompt (3.5M tokens, refused by the model)."""
+    r = rt.run("raise ValueError('not ' + repr(['rgb(176, 222, 59)'] * 150000))")
+    assert r.error_type == "ValueError" and len(r.error) < 3100 and "characters omitted" in r.error
+    assert r.error.startswith("ValueError: not ['rgb(176, 222, 59)'") and r.error.endswith("'rgb(176, 222, 59)']")
+    assert len(r.traceback) < 12100 and "<stat-run-" in r.traceback and "characters omitted" in r.traceback
+
+
 def test_session_is_live_and_diff_detects_changes(rt):
     r = rt.run("s = session.get_slice(0)\ns.adata.obs['new_col'] = 1\ns.adata.uns['note'] = 'x'\nsession.create_roi('r', 0, {'type': 'bbox', 'x_min': 0, 'x_max': 10, 'y_min': 0, 'y_max': 10})")
     assert r.success

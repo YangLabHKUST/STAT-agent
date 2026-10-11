@@ -11,6 +11,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
+from stat_agent.core.colors import normalize_palette
 from stat_agent.core.lock import SessionBusy
 from stat_agent.events.catalogue import ProvenanceUpdate
 from stat_agent.ledger.provenance import LedgerDelta, ProvenanceLedger
@@ -62,6 +63,7 @@ class SessionMutator:
         return m
 
     def set_celltype_colors(self, slice_id: int, colors: dict) -> MutationResult:
+        colors = normalize_palette(colors)  # stored as '#rrggbb', which generated code can plot with
         with self.mutation("celltype_colors") as m:
             s = self.session.get_slice(slice_id)
             merged = dict(s.get_celltype_colors() or {})

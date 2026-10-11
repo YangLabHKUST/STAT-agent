@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from stat_agent.core import DataSlice, SimpleSession
+from stat_agent.core.colors import normalize_palette
 
 
 def save_session(session: SimpleSession, agent=None, target: str | Path | None = None) -> Path:
@@ -46,7 +47,12 @@ def load_session(source: str | Path) -> tuple[SimpleSession, dict]:
         adata = ad.read_h5ad(source / "slices" / s["file"])
         images = {k: np.load(source / "slices" / f) for k, f in s.get("images", {}).items()}
         session.add_slice(DataSlice(slice_id=int(s["slice_id"]), modality=s["modality"], data_level=s["data_level"], adata=adata, images=images, metadata=dict(s.get("metadata", {}))))
-    session.celltype_colors = manifest.get("celltype_colors")
+    # a session saved before colours were stored as '#rrggbb' holds CSS 'rgb(...)' strings, which matplotlib cannot read
+    saved_colors = manifest.get("celltype_colors")
+    session.celltype_colors = normalize_palette(saved_colors) if saved_colors is not None else None
+    for s in session.iter_slices():
+        if isinstance(s.adata.uns.get("celltype_colors"), dict):
+            s.set_celltype_colors(normalize_palette(s.adata.uns["celltype_colors"]))
     for r in manifest.get("rois", []):
         definition = r.get("definition")
         if definition and r.get("slice_id") is not None:
