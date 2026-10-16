@@ -12,18 +12,10 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 
 </div>
 
-STAT is an AI agent for spatial transcriptomics. You ask in plain language, and STAT plans the
-analysis, picks a method from its library of 26 curated skills, checks that your data meet the
-method's prerequisites, writes and runs the code, repairs what fails and explains the result. It
-works next to a viewer of the tissue, where you can draw regions and see the results on each slice.
-
-Each skill declares what it needs and what it produces, so a request the data cannot support is
-stopped with a reason before any code runs. When the request or the data leave something open, STAT
-asks you; in auto mode it answers from skill defaults and the session and records every assumption.
-Every result keeps track of what it was computed from: correct an annotation or delete a region, and
-the results that depended on it are marked stale and can be rerun. A method outside the library goes
-through the same checks, and a successful run can be saved as a new skill. STAT works with OpenAI,
-Anthropic, Google, DeepSeek and other providers, or any OpenAI-compatible endpoint.
+STAT is an AI agent for spatial transcriptomics. Ask in plain language, and STAT plans the analysis,
+picks a method from its 26 curated skills, checks your data, runs the code, fixes errors and explains
+the result, next to an interactive tissue viewer. It stops requests your data cannot support, asks
+when something is unclear, and records how every result was made.
 
 ## Table of contents
 
