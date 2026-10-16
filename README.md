@@ -8,15 +8,14 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 
 [![PyPI version](https://img.shields.io/pypi/v/stat-agent.svg?color=blue)](https://pypi.org/project/stat-agent/)
 [![bioRxiv](https://img.shields.io/badge/bioRxiv-10.64898%2F2026.05.01.722244-b31b1b.svg)](https://doi.org/10.64898/2026.05.01.722244)
-[![Demo and results](https://img.shields.io/badge/demo_%26_results-statagent.online-2563eb.svg)](https://statagent.online/)
+[![Demo](https://img.shields.io/badge/demo-statagent.online-2563eb.svg)](https://statagent.online/)
 
 </div>
 
 
 ## Table of contents
 
-- [Demo and results](#demo-and-results)
-- [What is new in 2.0](#what-is-new-in-20)
+- [Features](#features)
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Data format](#data-format)
@@ -26,41 +25,28 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 - [Documentation](#documentation)
 - [License](#license)
 
-## Demo and results
+## Features
 
-- **[statagent.online](https://statagent.online/)**: try STAT live on a breast cancer tissue block in a session of
-  your own, and replay STAT's runs in the single-query benchmark and SessionBench step by step in STAT's interface.
-- **All experiment results**: [STAT_benchmarking.zip](https://drive.google.com/file/d/1y1t00YS98iIZjzuiBRjjoqiMprGEHAPZ/view?usp=sharing)
-  (14 GB, Google Drive).
-- **Colorectal cancer demo record**: [STAT-PaperRepro](https://github.com/chenyhvvvv/STAT-PaperRepro)
-  (`colorectal_cancer/`): two end-to-end STAT conversations with the notebook, per-turn logs and screenshots.
+STAT runs every request through the same workflow (plan, filter, match, verify, generate, execute,
+reflect, analyse, with planner, verifier and skill-selection clarifications) on the
+[LangGraph](https://github.com/langchain-ai/langgraph) runtime.
 
-## What is new in 2.0
-
-STAT 2.0 is a rewrite of the agent on the [LangGraph](https://github.com/langchain-ai/langgraph)
-runtime. The workflow is the same (plan, filter, match, verify, generate, execute, reflect,
-analyse, with planner, verifier and skill-selection clarifications), the implementation is new:
-
-- **Typed staged graph.** Each stage is a node with typed state; clarifications are checkpointed
+- **Staged graph.** Each stage is a node with typed state; clarifications are checkpointed
   interrupts, so a browser reload or a restart resumes at the pending question.
 - **Provenance ledger.** Every artefact (`obs` column, `obsm` matrix, ROI, figure) records what
   produced it and what it read. Deleting an ROI or correcting an annotation marks the dependants
   stale; the interface shows them and can re-run them downstream.
-- **Out-of-registry requests.** A named method without a skill gets a provisional method card that passes
-  the same filter and verifier. Unmet requirements are refused by name before any code runs;
-  successful runs can be drafted into a new skill.
+- **Methods outside the skill library.** A named method without a skill gets a provisional method
+  card that passes the same filter and verifier. Unmet requirements are refused by name before any
+  code runs; successful runs can be drafted into a new skill.
 - **Auto mode.** Every clarification can be answered by policy (skill defaults, known facts, session
   state) and recorded as an overridable assumption; what cannot be defaulted is refused.
-- **Loop mode.** The same tools and guards mounted on a single tool-calling agent (LangChain
-  `create_agent`, optionally `deepagents` with subagents) for comparisons and agentic use.
 - **Guarded in-process runtime.** AST safety checks, routed output, timeouts, snapshots and figure
   capture; the canvas and the session are two views of one live object.
-- **Robust web layer.** Starlette + uvicorn with a single ordered, resumable event stream
+- **Web interface.** Starlette + uvicorn with a single ordered, resumable event stream
   (`Last-Event-ID`), a turn API with typed replies, cooperative cancel and durable sessions.
-- **Skills v2.** Frontmatter declares `consumes`, `produces`, `platforms`,
+- **Skills with contracts.** Frontmatter declares `consumes`, `produces`, `platforms`,
   `dependencies` and `defaults`; a linter checks them against the code. All 26 skills are annotated.
-- **`stat-bench`.** Ablation arms, auto versus interactive, repeated seeds, SessionBench scripts,
-  frontmatter corruption and silent-error detectors, all as command-line switches.
 
 ## Installation
 
@@ -71,19 +57,18 @@ pip install stat-agent
 pip install "git+https://github.com/chenyhvvvv/STAT-agent.git"   # or the latest main from GitHub
 ```
 
-Extras:
+The analysis skills' dependencies (squidpy, scvi-tools, torch, ...):
 
 ```bash
-pip install "stat-agent[skills]"     # analysis skill dependencies (squidpy, scvi-tools, torch, ...)
-pip install "stat-agent[loop]"       # deepagents-based loop mode with subagents
-pip install "stat-agent[research]"   # web lookup for the method researcher (TAVILY_API_KEY)
-pip install "stat-agent[dev,bench]"  # tests and benchmark tooling
+pip install "stat-agent[skills]"
 ```
 
 Some skills need packages that are not on PyPI (STAGATE with PyG wheels matching your torch and
 CUDA build); see the skill's `SKILL.md` and its `dependencies` block.
 
 ## Quick start
+
+To try STAT without installing it, open the live demo at [statagent.online](https://statagent.online/).
 
 ### Web interface
 
@@ -267,26 +252,24 @@ or set `STAT_MODEL`.
 | Any OpenAI-compatible endpoint | `STAT_API_KEY` | `custom/<model>`, with the endpoint in the web interface's *Base URL* field |
 
 The staged pipeline uses prompted JSON for structured outputs, so the prompts are identical across
-backbones and no tool calling is required. Loop mode needs a model with tool calling. The benchmark runs
-replayed at statagent.online used Claude Sonnet 4.6 and DeepSeek V4.1 Flash at maximum reasoning effort.
+backbones and no tool calling is required. The benchmark runs replayed at statagent.online used
+Claude Sonnet 4.6 and DeepSeek V4.1 Flash at maximum reasoning effort.
 
-Other settings: `STAT_MODE` (`interactive` or `auto`), `STAT_DRIVER` (`staged` or `loop`),
-`STAT_HOME` (default `~/.stat_agent`, holds user skills and the RCTD reference cache),
-`STAT_LOGS_DIR`, `STAT_EXEC_TIMEOUT`, `STAT_SKILL_PATHS`.
+Other settings: `STAT_MODE` (`interactive` or `auto`), `STAT_HOME` (default `~/.stat_agent`, holds
+user skills and the RCTD reference cache), `STAT_LOGS_DIR`, `STAT_EXEC_TIMEOUT`, `STAT_SKILL_PATHS`.
 
 ## Benchmarks and reproducibility
 
-`stat-bench` (installed with the package) runs query suites through STAT with any ablation arm,
-clarification policy, driver, backbone and number of seeds, then scores and summarises the results
-with bootstrap confidence intervals. See [docs/benchmarking.md](docs/benchmarking.md). The paper's
-runs, their records and the colorectal cancer demo are linked under [Demo and results](#demo-and-results).
+[statagent.online](https://statagent.online/) has the records of all STAT runs on the single-turn and
+multi-turn queries (the single-query benchmark and SessionBench), each replayable step by step in STAT's
+interface, and a download link for the results of the other experiments. The colorectal cancer (CRC)
+demo records are in [STAT-PaperRepro](https://github.com/chenyhvvvv/STAT-PaperRepro).
 
 ## Documentation
 
-- [docs/v2-architecture.md](docs/v2-architecture.md): packages, the staged graph, what is deterministic and what the model decides, provenance, loop mode.
-- [docs/event-protocol.md](docs/event-protocol.md): the SSE event log, turn API, replies, cancel, errors, legacy aliases.
-- [docs/adding-a-skill.md](docs/adding-a-skill.md): the skill contract and the linter.
-- [docs/benchmarking.md](docs/benchmarking.md): `stat-bench` and SessionBench.
+- [Architecture](docs/v2-architecture.md): packages, the staged graph, what is deterministic and what the model decides, provenance.
+- [Event protocol](docs/event-protocol.md): the SSE event log, turn API, replies, cancel, errors.
+- [Adding a skill](docs/adding-a-skill.md): the skill contract and the linter.
 
 ## License
 
