@@ -12,10 +12,21 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 
 </div>
 
+STAT is an AI agent for spatial transcriptomics. You ask in plain language, and STAT plans the
+analysis, picks a method from its library of 26 curated skills, checks that your data meet the
+method's prerequisites, writes and runs the code, repairs what fails and explains the result. It
+works next to a viewer of the tissue, where you can draw regions and see the results on each slice.
+
+Each skill declares what it needs and what it produces, so a request the data cannot support is
+stopped with a reason before any code runs. When the request or the data leave something open, STAT
+asks you; in auto mode it answers from skill defaults and the session and records every assumption.
+Every result keeps track of what it was computed from: correct an annotation or delete a region, and
+the results that depended on it are marked stale and can be rerun. A method outside the library goes
+through the same checks, and a successful run can be saved as a new skill. STAT works with OpenAI,
+Anthropic, Google, DeepSeek and other providers, or any OpenAI-compatible endpoint.
 
 ## Table of contents
 
-- [Features](#features)
 - [Installation](#installation)
 - [Quick start](#quick-start)
 - [Data format](#data-format)
@@ -24,29 +35,6 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 - [Benchmarks and reproducibility](#benchmarks-and-reproducibility)
 - [Documentation](#documentation)
 - [License](#license)
-
-## Features
-
-STAT runs every request through the same workflow (plan, filter, match, verify, generate, execute,
-reflect, analyse, with planner, verifier and skill-selection clarifications) on the
-[LangGraph](https://github.com/langchain-ai/langgraph) runtime.
-
-- **Staged graph.** Each stage is a node with typed state; clarifications are checkpointed
-  interrupts, so a browser reload or a restart resumes at the pending question.
-- **Provenance ledger.** Every artefact (`obs` column, `obsm` matrix, ROI, figure) records what
-  produced it and what it read. Deleting an ROI or correcting an annotation marks the dependants
-  stale; the interface shows them and can re-run them downstream.
-- **Methods outside the skill library.** A named method without a skill gets a provisional method
-  card that passes the same filter and verifier. Unmet requirements are refused by name before any
-  code runs; successful runs can be drafted into a new skill.
-- **Auto mode.** Every clarification can be answered by policy (skill defaults, known facts, session
-  state) and recorded as an overridable assumption; what cannot be defaulted is refused.
-- **Guarded in-process runtime.** AST safety checks, routed output, timeouts, snapshots and figure
-  capture; the canvas and the session are two views of one live object.
-- **Web interface.** Starlette + uvicorn with a single ordered, resumable event stream
-  (`Last-Event-ID`), a turn API with typed replies, cooperative cancel and durable sessions.
-- **Skills with contracts.** Frontmatter declares `consumes`, `produces`, `platforms`,
-  `dependencies` and `defaults`; a linter checks them against the code. All 26 skills are annotated.
 
 ## Installation
 
