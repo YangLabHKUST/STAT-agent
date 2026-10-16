@@ -24,7 +24,6 @@ interactive tissue viewer.
 - [Built-in skills](#built-in-skills)
 - [LLM providers](#llm-providers)
 - [Benchmarks and reproducibility](#benchmarks-and-reproducibility)
-- [Documentation](#documentation)
 - [License](#license)
 
 ## Installation
@@ -243,12 +242,6 @@ user skills and the RCTD reference cache), `STAT_LOGS_DIR`, `STAT_EXEC_TIMEOUT`,
 multi-turn queries (the single-query benchmark and SessionBench), each replayable step by step in STAT's
 interface, and a download link for the results of the other experiments. The colorectal cancer (CRC)
 demo records are in [STAT-PaperRepro](https://github.com/chenyhvvvv/STAT-PaperRepro).
-
-## Documentation
-
-- [Architecture](docs/v2-architecture.md): packages, the staged graph, what is deterministic and what the model decides, provenance.
-- [Event protocol](docs/event-protocol.md): the SSE event log, turn API, replies, cancel, errors.
-- [Adding a skill](docs/adding-a-skill.md): the skill contract and the linter.
 
 ## License
 

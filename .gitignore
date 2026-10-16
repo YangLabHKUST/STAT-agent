@@ -80,3 +80,7 @@ tests/skills/
 .stat_agent/
 checkpoints.sqlite
 STAT.pptx
+
+# kept locally, not in the repository
+CHANGES-2.0.md
+examples/
