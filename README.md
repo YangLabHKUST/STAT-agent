@@ -13,9 +13,8 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 </div>
 
 STAT is an AI agent for spatial transcriptomics. Ask in plain language, and STAT plans the analysis,
-picks a method from its 26 curated skills, checks your data, runs the code, fixes errors and explains
-the result, next to an interactive tissue viewer. It stops requests your data cannot support, asks
-when something is unclear, and records how every result was made.
+picks a method, checks your data, runs the code, fixes errors and explains the result, next to an
+interactive tissue viewer.
 
 ## Table of contents
 
