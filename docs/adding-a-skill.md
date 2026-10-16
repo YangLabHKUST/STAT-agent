@@ -78,7 +78,7 @@ for the run.
 ```bash
 stat-agent skill validate --strict            # every skill in the layered registry
 stat-agent skill lint-file path/to/SKILL.md   # one file
-stat-agent chat --model openai/gpt-4o --dataset ./dataset
+stat-agent chat ./dataset --model openai/gpt-4o
 ```
 
 The web interface lists user skills next to the built-in ones and can disable any of them.

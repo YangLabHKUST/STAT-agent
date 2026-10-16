@@ -8,13 +8,14 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 
 [![PyPI version](https://img.shields.io/pypi/v/stat-agent.svg?color=blue)](https://pypi.org/project/stat-agent/)
 [![bioRxiv](https://img.shields.io/badge/bioRxiv-10.64898%2F2026.05.01.722244-b31b1b.svg)](https://doi.org/10.64898/2026.05.01.722244)
-[![HuggingFace Spaces](https://img.shields.io/badge/🤗_Demo-HF_Spaces-yellow.svg)](https://huggingface.co/spaces/CyhVVVV/stat-agent-demo)
+[![Demo and results](https://img.shields.io/badge/demo_%26_results-statagent.online-2563eb.svg)](https://statagent.online/)
 
 </div>
 
 
 ## Table of contents
 
+- [Demo and results](#demo-and-results)
 - [What is new in 2.0](#what-is-new-in-20)
 - [Installation](#installation)
 - [Quick start](#quick-start)
@@ -24,6 +25,15 @@ Ask in natural language, get a planned, verified, and executed analysis of spati
 - [Benchmarks and reproducibility](#benchmarks-and-reproducibility)
 - [Documentation](#documentation)
 - [License](#license)
+
+## Demo and results
+
+- **[statagent.online](https://statagent.online/)**: try STAT live on a breast cancer tissue block in a session of
+  your own, and replay STAT's runs in the single-query benchmark and SessionBench step by step in STAT's interface.
+- **All experiment results**: [STAT_benchmarking.zip](https://drive.google.com/file/d/1y1t00YS98iIZjzuiBRjjoqiMprGEHAPZ/view?usp=sharing)
+  (14 GB, Google Drive).
+- **Colorectal cancer demo record**: [STAT-PaperRepro](https://github.com/chenyhvvvv/STAT-PaperRepro)
+  (`colorectal_cancer/`): two end-to-end STAT conversations with the notebook, per-turn logs and screenshots.
 
 ## What is new in 2.0
 
@@ -58,6 +68,7 @@ Python 3.11 or newer.
 
 ```bash
 pip install stat-agent
+pip install "git+https://github.com/chenyhvvvv/STAT-agent.git"   # or the latest main from GitHub
 ```
 
 Extras:
@@ -96,9 +107,9 @@ turn produced, what is stale and why.
 ### Command line
 
 ```bash
-export OPENAI_API_KEY=...
-stat-agent chat --model openai/gpt-4o --dataset ./dataset          # REPL
-stat-agent chat --model openai/gpt-4o --dataset ./dataset -m "annotate cell types" --mode auto
+export ANTHROPIC_API_KEY=...
+stat-agent chat ./dataset --model anthropic/claude-sonnet-4-6           # REPL
+stat-agent chat ./dataset --model anthropic/claude-sonnet-4-6 -m "annotate cell types" --mode auto
 stat-agent session report ./logs/session_x --format html --out report.html
 stat-agent skill validate --strict
 ```
@@ -107,8 +118,8 @@ stat-agent skill validate --strict
 <summary>A chat turn in the interface</summary>
 
 <p align="center">
-  <a href="demo_chat_turn.jpg">
-    <img src="demo_chat_turn.jpg" alt="STAT one chat-turn demo" width="500" />
+  <a href="https://raw.githubusercontent.com/chenyhvvvv/STAT-agent/main/demo_chat_turn.jpg">
+    <img src="https://raw.githubusercontent.com/chenyhvvvv/STAT-agent/main/demo_chat_turn.jpg" alt="STAT one chat-turn demo" width="500" />
   </a>
 </p>
 
@@ -246,17 +257,18 @@ or set `STAT_MODEL`.
 | --- | --- | --- |
 | OpenAI | `OPENAI_API_KEY` | `openai/gpt-5.4`, `openai/gpt-4o` |
 | Anthropic | `ANTHROPIC_API_KEY` | `anthropic/claude-opus-4-7`, `anthropic/claude-sonnet-4-6` |
-| Google Gemini | `GOOGLE_API_KEY` | `google/gemini-3.1-pro-preview`, `google/gemini-2.5-pro` |
-| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-v4-pro` |
+| Google Gemini | `GOOGLE_API_KEY` or `GEMINI_API_KEY` | `google/gemini-3.1-pro-preview`, `google/gemini-2.5-pro` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek/deepseek-flash` |
 | Poe (gateway) | `POE_API_KEY` | `poe/claude-sonnet-4.5`, `poe/gpt-5.5` |
 | xAI | `XAI_API_KEY` | `xai/grok-4` |
 | Moonshot | `MOONSHOT_API_KEY` | `moonshot/kimi-k2` |
 | Zhipu | `ZHIPU_API_KEY` | `zhipu/glm-4.5` |
 | DashScope | `DASHSCOPE_API_KEY` | `dashscope/qwen3-max` |
-| Any OpenAI-compatible endpoint | `STAT_API_KEY` + `--base-url` | `custom/<model>` |
+| Any OpenAI-compatible endpoint | `STAT_API_KEY` | `custom/<model>`, with the endpoint in the web interface's *Base URL* field |
 
 The staged pipeline uses prompted JSON for structured outputs, so the prompts are identical across
-backbones and no tool calling is required. Loop mode needs a model with tool calling.
+backbones and no tool calling is required. Loop mode needs a model with tool calling. The benchmark runs
+replayed at statagent.online used Claude Sonnet 4.6 and DeepSeek V4.1 Flash at maximum reasoning effort.
 
 Other settings: `STAT_MODE` (`interactive` or `auto`), `STAT_DRIVER` (`staged` or `loop`),
 `STAT_HOME` (default `~/.stat_agent`, holds user skills and the RCTD reference cache),
@@ -266,8 +278,8 @@ Other settings: `STAT_MODE` (`interactive` or `auto`), `STAT_DRIVER` (`staged` o
 
 `stat-bench` (installed with the package) runs query suites through STAT with any ablation arm,
 clarification policy, driver, backbone and number of seeds, then scores and summarises the results
-with bootstrap confidence intervals. See [docs/benchmarking.md](docs/benchmarking.md). The
-analyses and figures of the STAT paper live in `https://github.com/chenyhvvvv/STAT-PaperRepro`.
+with bootstrap confidence intervals. See [docs/benchmarking.md](docs/benchmarking.md). The paper's
+runs, their records and the colorectal cancer demo are linked under [Demo and results](#demo-and-results).
 
 ## Documentation
 
